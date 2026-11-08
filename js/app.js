@@ -1,5 +1,7 @@
 /* =========================================================
-   app.js — interfaz: calendario, metas, chat con la asistente, recordatorios
+   app.js — núcleo: estado, calendario, modales, chat, ajustes
+   Las vistas "Hoy" y "Metas", el modo concentración, los rituales
+   y el recorrido viven en archivos aparte y se conectan vía window.App
    ========================================================= */
 (function () {
   'use strict';
@@ -7,14 +9,20 @@
   const { DU, SUBJECTS, uid, classesOn } = A;
   const P = window.Planner;
   const AI = window.AI;
+  const { icon } = window.Icons;
+  const FX = window.FX;
 
   let state = A.load();
   const ui = {
-    view: 'week',
+    view: 'today',
     cursor: DU.today(),
+    miniCursor: DU.today(),
     chatBusy: false,
+    chatOpen: false,
+    unread: false,
     weekScroll: null,
     showDone: false,
+    night: false,
   };
 
   // ---------- helpers ----------
@@ -24,6 +32,7 @@
   const el = (html) => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
   const persist = () => A.save(state);
   const commit = () => { persist(); renderAll(); };
+  const dur = (e) => Math.max(0, (DU.toMin(e.end) || 0) - (DU.toMin(e.start) || 0));
 
   const TYPE = {
     examen: { label: 'Examen', icon: '📝' },
@@ -36,7 +45,7 @@
   const DIF = ['', 'Fácil', 'Accesible', 'Media', 'Difícil', 'Muy difícil'];
   const stars = (n) => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
 
-  // ---------- toasts y diálogos ----------
+  // ---------- toasts y modales ----------
   function toast(msg, actions = [], ms = 4000) {
     const t = el(`<div class="toast"><span>${esc(msg)}</span></div>`);
     actions.forEach((a) => {
@@ -45,13 +54,17 @@
       t.appendChild(b);
     });
     $('#toasts').appendChild(t);
-    setTimeout(() => t.remove(), ms);
+    setTimeout(() => { t.classList.add('out'); setTimeout(() => t.remove(), 250); }, ms);
   }
 
-  function openModal(html, { wide = false, onClose } = {}) {
-    const ov = el(`<div class="overlay"><div class="modal ${wide ? 'wide' : ''}">${html}</div></div>`);
-    const close = () => { ov.remove(); document.removeEventListener('keydown', onKey); onClose && onClose(); };
-    const onKey = (e) => { if (e.key === 'Escape') close(); };
+  function openModal(html, { wide = false, cls = '', onClose } = {}) {
+    const ov = el(`<div class="overlay"><div class="modal ${wide ? 'wide' : ''} ${cls}">${html}</div></div>`);
+    let closed = false;
+    const close = () => {
+      if (closed) return; closed = true;
+      ov.remove(); document.removeEventListener('keydown', onKey); onClose && onClose();
+    };
+    const onKey = (e) => { if (e.key === 'Escape' && ov === $('#modalRoot').lastElementChild) close(); };
     ov.addEventListener('mousedown', (e) => { if (e.target === ov) close(); });
     document.addEventListener('keydown', onKey);
     $('#modalRoot').appendChild(ov);
@@ -72,13 +85,24 @@
     });
   }
 
-  // ---------- tema ----------
+  // ---------- tema, color y modo noche ----------
+  function isNightTime() {
+    const nm = DU.nowMin();
+    return state.settings.nightMode && (nm >= DU.toMin(state.settings.bedtime) - 30 || nm < 5 * 60);
+  }
   function applyTheme() {
-    const t = state.settings.theme;
-    if (t === 'auto') document.documentElement.removeAttribute('data-theme');
-    else document.documentElement.dataset.theme = t;
+    const st = state.settings;
+    ui.night = isNightTime();
+    const root = document.documentElement;
+    const t = ui.night ? 'dark' : st.theme;
+    if (t === 'auto') root.removeAttribute('data-theme'); else root.dataset.theme = t;
+    root.dataset.accent = st.accent || 'violeta';
+    if (ui.night) root.dataset.night = '1'; else root.removeAttribute('data-night');
+    const tb = $('#themeBtn');
+    if (tb) tb.innerHTML = icon(isDark() ? 'sun' : 'moon');
   }
   function isDark() {
+    if (ui.night) return true;
     const t = state.settings.theme;
     if (t === 'auto') return window.matchMedia('(prefers-color-scheme: dark)').matches;
     return t === 'dark';
@@ -98,20 +122,35 @@
     return ev;
   }
 
-  function setDone(ev, done) {
+  /** Marca hecho/no hecho y celebra si un jefe queda derrotado */
+  function markDone(ev, done) {
+    const parent = ev.parentId ? getEv(ev.parentId) : null;
+    const before = parent ? bossOf(parent).hp : null;
     ev.done = done;
-    if (ev.goalId) {
-      const log = (state.goalLog[ev.goalId] = state.goalLog[ev.goalId] || {});
-      if (done) log[ev.date] = true;
-    }
+    if (ev.goalId && done) (state.goalLog[ev.goalId] = state.goalLog[ev.goalId] || {})[ev.date] = true;
+    if (parent && before > 0 && bossOf(parent).hp === 0) celebrateBoss(parent);
+    else if (done && ev.type === 'estudio') FX.chime('ok');
+  }
+
+  function addFocus(ev, minutes) {
+    const parent = ev.parentId ? getEv(ev.parentId) : (ev.type === 'examen' || ev.type === 'tarea' ? ev : null);
+    const before = parent ? bossOf(parent).hp : null;
+    ev.focusMinutes = (ev.focusMinutes || 0) + minutes;
+    if (parent && before > 0 && bossOf(parent).hp === 0) celebrateBoss(parent);
+  }
+
+  function celebrateBoss(parent) {
+    const b = bossOf(parent);
+    setTimeout(() => {
+      FX.confetti(); FX.chime('win');
+      toast(`🏆 ¡Derrotaste al ${b.name}! Estás listo para ${parent.title}`, [], 7000);
+    }, 150);
   }
 
   async function deleteEvent(ev, ask = true) {
     const kids = childrenOf(ev.id);
     if (ask) {
-      const msg = kids.length
-        ? `¿Eliminar "${ev.title}" y sus ${kids.length} sesiones de estudio?`
-        : `¿Eliminar "${ev.title}"?`;
+      const msg = kids.length ? `¿Eliminar "${ev.title}" y sus ${kids.length} sesiones de estudio?` : `¿Eliminar "${ev.title}"?`;
       if (!(await confirmBox(msg, 'Eliminar', true))) return false;
     }
     const ids = new Set([ev.id, ...kids.map((k) => k.id)]);
@@ -122,15 +161,65 @@
     return true;
   }
 
+  // ---------- jefes (exámenes como monstruos) ----------
+  const TIERS = [
+    { max: 6, face: '🐛', name: 'Bichito' },
+    { max: 12, face: '👾', name: 'Monstruo' },
+    { max: 18, face: '🐲', name: 'Dragón' },
+    { max: 99, face: '🐉', name: 'Dragón ancestral' },
+  ];
+  function bossOf(ev) {
+    const power = (ev.importance || 3) * (ev.difficulty || 3);
+    const tier = TIERS.find((t) => power <= t.max);
+    const kids = childrenOf(ev.id);
+    const maxHP = Math.max(30, ev.estMinutes || 60);
+    const dmg = kids.reduce((s, k) => s + (k.done ? dur(k) : (k.focusMinutes || 0)), 0) + (ev.focusMinutes || 0);
+    const hp = Math.max(0, maxHP - dmg);
+    const subj = ev.subject && SUBJECTS[ev.subject];
+    return {
+      ev, tier, power, maxHP, hp, pct: Math.round(hp / maxHP * 100),
+      name: `${tier.name}${subj ? ' de ' + subj.short : ''}`, face: tier.face,
+      sessions: kids.length, sessionsDone: kids.filter((k) => k.done).length,
+      nextSession: kids.filter((k) => !k.done).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))[0] || null,
+    };
+  }
+  function activeBosses() {
+    const today = DU.today();
+    return state.events.filter((e) => (e.type === 'examen' || (e.type === 'tarea' && (e.estMinutes || 0) >= 60)) && !e.done && e.date >= today)
+      .sort((a, b) => a.date.localeCompare(b.date)).map(bossOf);
+  }
+
+  // ---------- aprendizaje: ¿cuánto tiempo necesitas de verdad? ----------
+  const FEEL = { poco: 1.3, justo: 1, sobro: 0.8 };
+  function subjectFactor(subject) {
+    if (!subject) return null;
+    const xs = state.events.filter((e) => e.subject === subject && e.prepFeel && FEEL[e.prepFeel]);
+    if (!xs.length) return null;
+    const f = xs.reduce((s, e) => s + FEEL[e.prepFeel], 0) / xs.length;
+    return { factor: f, n: xs.length };
+  }
+  function pendingResults() {
+    const today = DU.today(), nm = DU.nowMin();
+    return state.events.filter((e) => e.type === 'examen' && !e.resultDone
+      && (e.date < today || (e.date === today && nm > DU.toMin(e.end || e.start))) && DU.diffDays(e.date, today) <= 21);
+  }
+
   // ---------- metas ----------
   const isDoneGoal = (g, d) => !!(state.goalLog[g.id] && state.goalLog[g.id][d]);
-  function toggleGoal(gid, date = DU.today()) {
+  function setGoal(gid, date, val) {
     const log = (state.goalLog[gid] = state.goalLog[gid] || {});
-    if (log[date]) delete log[date]; else log[date] = true;
-    commit();
+    if (val) log[date] = true; else delete log[date];
+  }
+  function toggleGoal(gid, date = DU.today()) {
     const g = state.goals.find((x) => x.id === gid);
-    if (g && log[date] && date === DU.today()) {
+    if (!g) return;
+    const now = !isDoneGoal(g, date);
+    setGoal(gid, date, now);
+    commit();
+    if (now && date === DU.today()) {
       const s = streakOf(g);
+      FX.chime('ok');
+      if (s.current > 0 && s.current % 7 === 0) FX.confetti({ count: 90 });
       toast(`${g.icon} ¡Bien! ${s.current > 1 ? `Racha de ${s.current} ${g.freq === 'daily' ? 'días' : 'semanas'} 🔥` : 'Meta cumplida'}`);
     }
   }
@@ -145,7 +234,7 @@
       while (isDoneGoal(g, d)) { cur++; d = DU.addDays(d, -1); }
       let best = 0, run = 0, prev = null;
       dates.forEach((x) => { run = prev && DU.diffDays(prev, x) === 1 ? run + 1 : 1; best = Math.max(best, run); prev = x; });
-      return { current: cur, best: Math.max(best, cur), unit: 'días' };
+      return { current: cur, best: Math.max(best, cur), unit: 'días', total: dates.length };
     }
     const target = g.target || 1;
     let ws = DU.startOfWeek(today);
@@ -159,29 +248,60 @@
         best = Math.max(best, run);
       }
     }
-    return { current: cur, best: Math.max(best, cur), unit: 'semanas', week: weekCount(g, DU.startOfWeek(today)) };
+    return { current: cur, best: Math.max(best, cur), unit: 'semanas', week: weekCount(g, DU.startOfWeek(today)), total: dates.length };
+  }
+
+  // ---------- presentación ----------
+  function subjOf(e) { return e.subject && SUBJECTS[e.subject] ? SUBJECTS[e.subject] : null; }
+  function shortTitle(e) {
+    const s = subjOf(e);
+    if (!s) return e.title.replace(/^(Estudiar|Repaso|Avanzar): /, '');
+    if (e.type === 'estudio') return `${/^Repaso/.test(e.title) ? 'Repaso' : 'Estudio'} ${s.short}`;
+    if (e.type === 'examen') return `Examen ${s.short}`;
+    if (e.type === 'tarea') return `Tarea ${s.short}`;
+    return e.title;
+  }
+  function badge(e) {
+    const s = subjOf(e);
+    return `${TYPE[e.type] ? TYPE[e.type].icon : ''}${s ? `<span class="sicon">${s.icon}</span>` : ''}`;
+  }
+
+  // ---------- Luna: estado de ánimo ----------
+  function lunaMood() {
+    const nm = DU.nowMin();
+    const today = DU.today();
+    const bed = DU.toMin(state.settings.bedtime);
+    if (ui.chatBusy) return { face: '🤔', text: 'pensando…' };
+    if (nm >= bed || nm < 5 * 60) return { face: '😴', text: 'durmiendo… ¡tú también!' };
+    const soon = state.events.some((e) => e.type === 'examen' && !e.done && DU.diffDays(today, e.date) >= 0 && DU.diffDays(today, e.date) <= 2);
+    const daily = state.goals.filter((g) => g.freq === 'daily');
+    if (daily.length && daily.every((g) => isDoneGoal(g, today))) return { face: '🥳', text: '¡cumpliste tus metas de hoy!' };
+    if (soon) return { face: '🤓', text: 'modo estudio: examen cerca' };
+    if (nm < 12 * 60) return { face: '😊', text: 'buenos días' };
+    return { face: '🌙', text: 'aquí estoy' };
   }
 
   // =========================================================
   //  RENDER
   // =========================================================
   function renderAll() {
+    applyTheme();
     renderTopbar();
-    renderMain();
+    renderView();
     renderSidebar();
-    renderChatStatus();
+    renderLuna();
   }
 
   function renderTopbar() {
     $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.view === ui.view));
-    $('.datenav').style.visibility = ui.view === 'goals' ? 'hidden' : 'visible';
+    $('.datenav').classList.toggle('hidden', ui.view === 'goals' || ui.view === 'today');
     let label = '';
     if (ui.view === 'week') {
       const s = DU.startOfWeek(ui.cursor), e = DU.addDays(s, 6);
       const ds = DU.parse(s), de = DU.parse(e);
       label = ds.getMonth() === de.getMonth()
-        ? `${ds.getDate()} – ${de.getDate()} de ${DU.MONTHS[de.getMonth()]} ${de.getFullYear()}`
-        : `${ds.getDate()} ${DU.MONTHS[ds.getMonth()].slice(0, 3)} – ${de.getDate()} ${DU.MONTHS[de.getMonth()].slice(0, 3)} ${de.getFullYear()}`;
+        ? `${ds.getDate()} – ${de.getDate()} de ${DU.MONTHS[de.getMonth()]}`
+        : `${ds.getDate()} ${DU.MONTHS[ds.getMonth()].slice(0, 3)} – ${de.getDate()} ${DU.MONTHS[de.getMonth()].slice(0, 3)}`;
     } else if (ui.view === 'month') {
       const d = DU.parse(ui.cursor);
       label = `${DU.MONTHS[d.getMonth()]} ${d.getFullYear()}`;
@@ -189,27 +309,38 @@
     $('#rangeLabel').textContent = label;
   }
 
-  function renderMain() {
-    const main = $('#main');
-    const prevBody = $('.week-body', main);
+  function renderView() {
+    const view = $('#view');
+    const prevBody = $('.week-body', view);
     if (prevBody) ui.weekScroll = prevBody.scrollTop;
-    main.innerHTML = '';
-    if (ui.view === 'week') main.appendChild(renderWeek());
-    else if (ui.view === 'month') main.appendChild(renderMonth());
-    else main.appendChild(renderGoals());
-    const body = $('.week-body', main);
+    view.innerHTML = '';
+    view.dataset.view = ui.view;
+    let node;
+    if (ui.view === 'week') node = renderWeek();
+    else if (ui.view === 'month') node = renderMonth();
+    else if (ui.view === 'goals') node = App.views.goals();
+    else node = App.views.today();
+    view.appendChild(node);
+    const body = $('.week-body', view);
     if (body) {
       if (ui.weekScroll == null) {
-        const ppm = getPPM();
-        const target = Math.max(DU.toMin('07:00'), DU.nowMin() - 150);
-        body.scrollTop = (target - state.settings.calStart * 60) * ppm;
+        const sc = makeScale();
+        const target = Math.max(sc.c0, DU.nowMin() - 120);
+        body.scrollTop = Math.max(0, sc.y(target) - 40);
       } else body.scrollTop = ui.weekScroll;
     }
   }
 
-  function getPPM() {
-    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ppm'));
-    return isNaN(v) ? 1.05 : v;
+  // ---------- Escala de tiempo no lineal ----------
+  function makeScale() {
+    const st = state.settings;
+    const c0 = st.calStart * 60, c1 = st.calEnd * 60;
+    const bed = Math.min(c1, Math.max(18 * 60 + 30, DU.toMin(st.bedtime)));
+    const marks = [[c0, st.expandSchool ? 1.05 : 0.5], [DU.toMin(A.SCHOOL_END), 0.95], [18 * 60, 1.75], [bed, 0.9]];
+    const segs = marks.map(([s, p], i) => [s, i < marks.length - 1 ? marks[i + 1][0] : c1, p]).filter(([a, b]) => b > a);
+    const y = (m) => { let acc = 0; for (const [a, b, p] of segs) { if (m <= a) break; acc += (Math.min(m, b) - a) * p; } return acc; };
+    const inv = (px) => { let acc = 0; for (const [a, b, p] of segs) { const h = (b - a) * p; if (px <= acc + h) return a + (px - acc) / p; acc += h; } return c1; };
+    return { y, inv, H: y(c1), c0, c1, bed };
   }
 
   // ---------- Semana ----------
@@ -230,29 +361,32 @@
     return items;
   }
 
+  function classActions(c, d) {
+    toast(`${c.icon} ${c.name} · ${c.teacher} · ${c.start}–${c.end}`, [
+      { label: '＋ Examen', fn: () => openEventModal({ type: 'examen', subject: c.subject, date: d, start: c.start, end: c.end }) },
+      { label: '＋ Tarea', fn: () => openEventModal({ type: 'tarea', subject: c.subject, date: d, start: c.start, end: DU.toTime(DU.toMin(c.start) + 30) }) },
+    ], 6000);
+  }
+
   function renderWeek() {
     const st = state.settings;
     const start = DU.startOfWeek(ui.cursor);
     const days = [...Array(7)].map((_, i) => DU.addDays(start, i));
     const today = DU.today();
-    const c0 = st.calStart * 60, c1 = st.calEnd * 60;
-    const ppm = getPPM();
-    const y = (m) => (m - c0) * ppm;
-    const H = (c1 - c0) * ppm;
+    const sc = makeScale();
+    const { y } = sc;
 
     const wrap = el('<div class="week"></div>');
-    const head = el('<div class="week-head"><div></div></div>');
+    const head = el(`<div class="week-head"><div class="corner"><button class="icon-btn sm" id="schoolToggle" title="${st.expandSchool ? 'Comprimir el colegio' : 'Expandir el colegio'}">${icon(st.expandSchool ? 'collapse' : 'expand', 16)}</button></div></div>`);
+    $('#schoolToggle', head).onclick = () => { st.expandSchool = !st.expandSchool; ui.weekScroll = null; commit(); };
     days.forEach((d) => {
       const w = DU.dow(d);
       const school = P.isSchoolDay(state, d);
       const weekdayNoSchool = w >= 1 && w <= 5 && !school;
-      const studyMin = state.events.filter((e) => e.date === d && e.type === 'estudio').reduce((s, e) => s + (DU.toMin(e.end) - DU.toMin(e.start)), 0);
-      const free = P.freeMinutes(state, d) + studyMin;
-      const pct = free ? Math.min(100, Math.round(studyMin / free * 100)) : 0;
-      const hd = el(`<div class="day-head ${d === today ? 'today' : ''}" title="Ver ${DU.pretty(d)}">
+      const exams = state.events.filter((e) => e.date === d && e.type === 'examen' && !e.done);
+      const hd = el(`<div class="day-head ${d === today ? 'today' : ''} ${d < today ? 'past' : ''}" title="Agregar algo el ${DU.pretty(d)}">
         <div class="dn">${DU.DAYS_SHORT[w]}</div><div class="dd">${DU.parse(d).getDate()}</div>
-        ${weekdayNoSchool ? '<div class="noschool">sin clases</div>' : ''}
-        <div class="load" title="Tiempo libre usado para estudiar: ${pct}%"><i style="width:${pct}%"></i></div>
+        <div class="dtags">${weekdayNoSchool ? '<span class="noschool">🏖️ libre</span>' : ''}${exams.map((e) => `<span class="examdot" title="${esc(e.title)}">${subjOf(e) ? subjOf(e).icon : '📝'}</span>`).join('')}</div>
         ${w >= 1 && w <= 5 ? `<button class="school-toggle" title="${school ? 'Marcar día sin clases (feriado)' : 'Marcar día con clases'}">${school ? '🏫' : '🏖️'}</button>` : ''}
       </div>`);
       const tg = $('.school-toggle', hd);
@@ -264,88 +398,187 @@
         commit();
         toast(i >= 0 ? `${DU.prettyShort(d)}: con clases` : `${DU.prettyShort(d)}: marcado sin clases 🏖️`);
       };
+      hd.addEventListener('click', () => openEventModal({ date: d }));
       head.appendChild(hd);
     });
     wrap.appendChild(head);
 
     const body = el('<div class="week-body"></div>');
-    const grid = el(`<div class="week-grid" style="height:${H}px"></div>`);
+    const grid = el(`<div class="week-grid" style="height:${sc.H}px"></div>`);
     const tcol = el('<div class="time-col"></div>');
-    for (let hr = st.calStart; hr <= st.calEnd; hr++) {
-      if (hr === st.calStart) continue;
-      tcol.appendChild(el(`<div class="tl" style="top:${y(hr * 60)}px">${String(hr).padStart(2, '0')}:00</div>`));
+    for (let hr = st.calStart + 1; hr <= st.calEnd; hr++) {
+      tcol.appendChild(el(`<div class="tl ${hr * 60 >= 18 * 60 && hr * 60 <= sc.bed ? 'prime' : ''}" style="top:${y(hr * 60)}px">${hr}:00</div>`));
     }
     grid.appendChild(tcol);
 
     days.forEach((d) => {
       const w = DU.dow(d);
-      const col = el(`<div class="day-col ${w === 0 || w === 6 ? 'weekend' : ''}" data-date="${d}"></div>`);
+      const col = el(`<div class="day-col ${w === 0 || w === 6 ? 'weekend' : ''} ${d === today ? 'is-today' : ''}" data-date="${d}"></div>`);
       for (let hr = st.calStart; hr < st.calEnd; hr++) {
         col.appendChild(el(`<div class="hour-line" style="top:${y(hr * 60)}px"></div>`));
-        col.appendChild(el(`<div class="hour-line half" style="top:${y(hr * 60 + 30)}px"></div>`));
+        if (hr >= 18) col.appendChild(el(`<div class="hour-line half" style="top:${y(hr * 60 + 30)}px"></div>`));
       }
-      // clases
-      if (P.isSchoolDay(state, d)) {
-        classesOn(w).forEach((c) => {
-          const s = DU.toMin(c.start), e = DU.toMin(c.end);
-          const b = el(`<div class="blk school" style="top:${y(s)}px;height:${(e - s) * ppm - 2}px;--c:${c.color}" title="${esc(c.name)} · ${esc(c.teacher)} (${c.start}-${c.end})">
-            <div class="bt">${esc(c.name)}</div><div class="bm">${esc(c.teacher)} · ${c.start}</div></div>`);
-          b.onclick = (ev) => {
-            ev.stopPropagation();
-            toast(`${c.name} · ${c.teacher} · ${c.start}–${c.end}`, [
-              { label: '＋ Examen', fn: () => openEventModal({ type: 'examen', subject: c.subject, date: d, start: c.start, end: c.end }) },
-              { label: '＋ Tarea', fn: () => openEventModal({ type: 'tarea', subject: c.subject, date: d, start: c.start, end: DU.toTime(DU.toMin(c.start) + 30) }) },
-            ], 6000);
-          };
-          col.appendChild(b);
+      col.appendChild(el(`<div class="prime-zone" style="top:${y(18 * 60)}px;height:${y(sc.bed) - y(18 * 60)}px"></div>`));
+      col.appendChild(el(`<div class="night-zone" style="top:${y(sc.bed)}px;height:${sc.H - y(sc.bed)}px"></div>`));
+
+      // huecos libres
+      if (d >= today) {
+        P.freeSlots(state, d).forEach(([a, b]) => {
+          col.appendChild(el(`<div class="free" style="top:${y(a) + 1}px;height:${y(b) - y(a) - 2}px" data-a="${a}" data-b="${b}" title="Libre ${DU.toTime(a)}–${DU.toTime(b)}"><span>＋ libre · ${DU.fmtDur(b - a)}</span></div>`));
         });
       }
-      // rutina
-      P.routinesOn(state, d).forEach((r) => {
-        const s = DU.toMin(r.start), e = DU.toMin(r.end);
-        col.appendChild(el(`<div class="blk routine" style="top:${y(s)}px;height:${(e - s) * ppm - 2}px" title="${esc(r.title)} ${r.start}-${r.end}">
-          <div class="bt">${r.icon || ''} ${esc(r.title)}</div><div class="bm">${r.start}–${r.end}</div></div>`));
-      });
-      // lectura + hora de dormir
-      const bed = DU.toMin(st.bedtime);
-      if (state.goals.some((g) => g.id === 'read')) {
-        col.appendChild(el(`<div class="blk read" style="top:${y(bed - 25)}px;height:${12 * ppm}px">📖 leer 10 min</div>`));
+
+      // colegio: cápsula con franjas por materia
+      if (P.isSchoolDay(state, d)) {
+        const s0 = DU.toMin(A.SCHOOL_START), s1 = DU.toMin(A.SCHOOL_END);
+        const cap = el(`<div class="school-cap ${st.expandSchool ? 'open' : ''}" style="top:${y(s0)}px;height:${y(s1) - y(s0)}px"></div>`);
+        classesOn(w).forEach((c) => {
+          const a = DU.toMin(c.start), b = DU.toMin(c.end);
+          const band = el(`<div class="band" style="top:${y(a) - y(s0)}px;height:${y(b) - y(a) - 1}px;--c:${c.color}" title="${esc(c.name)} · ${esc(c.teacher)} · ${c.start}–${c.end}">
+            <span class="bi">${c.icon}</span><span class="bn">${esc(c.short)}</span>${st.expandSchool ? `<span class="bt2">${esc(c.teacher)}</span>` : ''}</div>`);
+          band.onclick = (ev) => { ev.stopPropagation(); classActions(c, d); };
+          cap.appendChild(band);
+        });
+        col.appendChild(cap);
       }
-      if (bed > c0 && bed < c1) col.appendChild(el(`<div class="bed-line" style="top:${y(bed)}px"><span>🌙 ${st.bedtime}</span></div>`));
+
+      // rutina (discreta)
+      P.routinesOn(state, d).forEach((r) => {
+        const a = DU.toMin(r.start), b = DU.toMin(r.end);
+        col.appendChild(el(`<div class="routine" style="top:${y(a)}px;height:${y(b) - y(a) - 1}px" title="${esc(r.title)} ${r.start}–${r.end}">
+          <span>${r.icon || '•'} ${esc(r.title)}</span></div>`));
+      });
+
+      col.appendChild(el(`<div class="bed-line" style="top:${y(sc.bed)}px"><span>🌙</span></div>`));
 
       // eventos
       const evs = state.events.filter((e) => e.date === d && e.start);
       layoutLanes(evs).forEach(({ e, s, en, lane, n }) => {
         const wpct = 100 / n;
-        const subj = e.subject && SUBJECTS[e.subject];
-        const b = el(`<div class="blk ev t-${e.type} ${e.done ? 'done' : ''}" style="top:${y(s)}px;height:${Math.max(18, (en - s) * ppm - 2)}px;left:calc(${lane * wpct}% + 6px);width:calc(${wpct}% - 9px);right:auto"
-          title="${esc(e.title)} · ${e.start}–${e.end || ''}">
-          <div class="bt">${TYPE[e.type] ? TYPE[e.type].icon : ''} ${esc(e.title)}</div>
-          <div class="bm">${e.start}${e.end ? '–' + e.end : ''}${subj ? ' · ' + esc(subj.name) : ''}</div>
-          ${e.importance && (e.type === 'examen' || e.type === 'tarea') ? `<span class="badges">${'!'.repeat(Math.max(0, e.importance - 2))}</span>` : ''}
+        const h = Math.max(20, y(en) - y(s) - 2);
+        const s0 = subjOf(e);
+        const boss = e.type === 'examen' && !e.done ? bossOf(e) : null;
+        const b = el(`<div class="ev t-${e.type} ${e.done ? 'done' : ''} ${h < 34 ? 'tiny' : ''}" data-id="${e.id}"
+          style="top:${y(s)}px;height:${h}px;left:calc(${lane * wpct}% + 4px);width:calc(${wpct}% - 7px);${s0 ? `--sc:${s0.color}` : ''}"
+          title="${esc(e.title)} · ${e.start}–${e.end || ''}${e.notes ? '\n' + esc(e.notes) : ''}">
+          <div class="bt">${badge(e)} ${esc(shortTitle(e))}</div>
+          <div class="bm">${e.start}–${e.end || ''}</div>
+          ${boss ? `<div class="mini-hp" title="Vida del jefe ${boss.hp}/${boss.maxHP} min"><i style="width:${boss.pct}%"></i></div>` : ''}
+          ${e.type === 'estudio' && !e.done ? `<button class="play" title="Modo concentración">${icon('play', 12)}</button>` : ''}
+          <div class="rz" title="Arrastra para cambiar la duración"></div>
         </div>`);
-        b.onclick = (ev) => { ev.stopPropagation(); openEventModal({ id: e.id }); };
+        const pb = $('.play', b);
+        if (pb) {
+          pb.addEventListener('pointerdown', (ev) => ev.stopPropagation());
+          pb.onclick = (ev) => { ev.stopPropagation(); App.openFocus(e); };
+        }
+        b.addEventListener('pointerdown', (ev) => startDrag(ev, e, ev.target.classList.contains('rz') ? 'resize' : 'move', b, sc));
         col.appendChild(b);
       });
 
       if (d === today) {
         const nm = DU.nowMin();
-        if (nm > c0 && nm < c1) col.appendChild(el(`<div class="now-line" style="top:${y(nm)}px"></div>`));
+        if (nm > sc.c0 && nm < sc.c1) col.appendChild(el(`<div class="now-line" style="top:${y(nm)}px"></div>`));
       }
-      col.onclick = (ev) => {
-        if (ev.target !== col && !ev.target.classList.contains('hour-line')) return;
-        const rect = col.getBoundingClientRect();
-        const m = Math.round((c0 + (ev.clientY - rect.top) / ppm) / 15) * 15;
-        openEventModal({ date: d, start: DU.toTime(m), end: DU.toTime(m + 60) });
-      };
+      col.addEventListener('pointerdown', (ev) => {
+        const t = ev.target;
+        if (t !== col && !t.matches('.hour-line, .free, .free span, .prime-zone, .night-zone')) return;
+        startCreate(ev, col, d, sc);
+      });
       grid.appendChild(col);
-    });
-    head.querySelectorAll('.day-head').forEach((hd, i) => {
-      hd.addEventListener('click', () => openEventModal({ date: days[i] }));
     });
     body.appendChild(grid);
     wrap.appendChild(body);
     return wrap;
+  }
+
+  // ---------- arrastrar y soltar ----------
+  const snap = (m, s = 5) => Math.round(m / s) * s;
+  function colAt(x) {
+    return $$('.day-col').find((c) => { const r = c.getBoundingClientRect(); return x >= r.left && x < r.right; });
+  }
+  function startDrag(e, ev, mode, node, sc) {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    if (e.pointerType === 'touch') {
+      node.addEventListener('pointerup', () => openEventModal({ id: ev.id }), { once: true });
+      return;
+    }
+    e.preventDefault();
+    const startY = e.clientY, startX = e.clientX;
+    const s0 = DU.toMin(ev.start), e0 = DU.toMin(ev.end || ev.start) || s0 + 30;
+    const colRect = node.parentElement.getBoundingClientRect();
+    const grab = startY - colRect.top - sc.y(s0);
+    let moved = false, ns = s0, ne = e0, nd = ev.date;
+    const onMove = (m) => {
+      if (!moved && Math.hypot(m.clientX - startX, m.clientY - startY) < 5) return;
+      if (!moved) { moved = true; node.classList.add('dragging'); document.body.classList.add('is-dragging'); }
+      if (mode === 'move') {
+        const col = colAt(m.clientX) || node.parentElement;
+        if (col !== node.parentElement) col.appendChild(node);
+        nd = col.dataset.date;
+        const r = col.getBoundingClientRect();
+        ns = Math.max(sc.c0, Math.min(sc.c1 - (e0 - s0), snap(sc.inv(m.clientY - r.top - grab))));
+        ne = ns + (e0 - s0);
+        node.style.left = '4px'; node.style.width = 'calc(100% - 7px)';
+      } else {
+        const r = node.parentElement.getBoundingClientRect();
+        ne = Math.max(s0 + 15, Math.min(sc.c1, snap(sc.inv(m.clientY - r.top))));
+      }
+      node.style.top = `${sc.y(ns)}px`;
+      node.style.height = `${Math.max(20, sc.y(ne) - sc.y(ns) - 2)}px`;
+      $('.bm', node).textContent = `${DU.toTime(ns)}–${DU.toTime(ne)}`;
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('is-dragging');
+      if (!moved) { openEventModal({ id: ev.id }); return; }
+      const before = { date: ev.date, start: ev.start, end: ev.end };
+      Object.assign(ev, { date: nd, start: DU.toTime(ns), end: DU.toTime(ne) });
+      commit();
+      const conflict = P.busy(state, nd, { excludeId: ev.id }).some(([a, b]) => ns < b && ne > a);
+      toast(`${mode === 'move' ? 'Movido' : 'Ajustado'}: ${DU.prettyShort(nd)} ${ev.start}–${ev.end}${conflict ? ' ⚠️ choca con algo' : ''}`,
+        [{ label: 'Deshacer', fn: () => { Object.assign(ev, before); commit(); } }]);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }
+
+  function startCreate(e, col, d, sc) {
+    if (e.button !== 0) return;
+    const r = col.getBoundingClientRect();
+    const freeEl = e.target.closest('.free');
+    const m0 = snap(sc.inv(e.clientY - r.top), 15);
+    const clickCreate = () => {
+      if (freeEl) {
+        const a = +freeEl.dataset.a, b = +freeEl.dataset.b;
+        const st = Math.max(a, Math.min(m0, b - 30));
+        openEventModal({ date: d, type: 'evento', start: DU.toTime(st), end: DU.toTime(Math.min(b, st + 60)) });
+      } else openEventModal({ date: d, type: 'evento', start: DU.toTime(m0), end: DU.toTime(m0 + 60) });
+    };
+    if (e.pointerType === 'touch') { col.addEventListener('pointerup', clickCreate, { once: true }); return; }
+    e.preventDefault();
+    let ghost = null, m1 = m0;
+    const onMove = (m) => {
+      m1 = snap(sc.inv(m.clientY - r.top), 15);
+      if (!ghost && Math.abs(m1 - m0) < 15) return;
+      if (!ghost) { ghost = el('<div class="drag-ghost"></div>'); col.appendChild(ghost); document.body.classList.add('is-dragging'); }
+      const a = Math.min(m0, m1), b = Math.max(m0, m1);
+      ghost.style.top = `${sc.y(a)}px`; ghost.style.height = `${sc.y(b) - sc.y(a)}px`;
+      ghost.textContent = `${DU.toTime(a)}–${DU.toTime(b)}`;
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      document.body.classList.remove('is-dragging');
+      if (!ghost) { clickCreate(); return; }
+      ghost.remove();
+      const a = Math.min(m0, m1), b = Math.max(m0, m1);
+      openEventModal({ date: d, type: 'evento', start: DU.toTime(a), end: DU.toTime(Math.max(b, a + 15)) });
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
   }
 
   // ---------- Mes ----------
@@ -357,7 +590,6 @@
     const wrap = el('<div class="month"></div>');
     const grid = el('<div class="month-grid"></div>');
     ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].forEach((d) => grid.appendChild(el(`<div class="month-dow">${d}</div>`)));
-    grid.style.gridTemplateRows = 'auto';
     const order = { examen: 0, tarea: 1, evento: 2, meta: 3, estudio: 4 };
     for (let i = 0; i < 42; i++) {
       const d = DU.addDays(start, i);
@@ -366,9 +598,9 @@
         .sort((a, b) => order[a.type] - order[b.type] || (a.start || '').localeCompare(b.start || ''));
       const w = dd.getDay();
       const noSchool = w >= 1 && w <= 5 && !P.isSchoolDay(state, d);
-      const cell = el(`<div class="mcell ${dd.getMonth() !== cur.getMonth() ? 'other' : ''} ${d === today ? 'today' : ''}">
-        <div class="mn"><span>${dd.getDate()}</span>${noSchool ? '<small>sin clases</small>' : ''}</div>
-        ${evs.slice(0, 3).map((e) => `<div class="chip t-${e.type} ${e.done ? 'done' : ''}" title="${esc(e.title)}">${esc(e.start || '')} ${esc(e.title)}</div>`).join('')}
+      const cell = el(`<div class="mcell ${dd.getMonth() !== cur.getMonth() ? 'other' : ''} ${d === today ? 'today' : ''} ${d < today ? 'past' : ''}">
+        <div class="mn"><span>${dd.getDate()}</span>${noSchool ? '<small>🏖️</small>' : ''}</div>
+        ${evs.slice(0, 3).map((e) => `<div class="chip t-${e.type} ${e.done ? 'done' : ''}" title="${esc(e.title)}">${badge(e)} ${esc(shortTitle(e))}</div>`).join('')}
         ${evs.length > 3 ? `<div class="more">+${evs.length - 3} más</div>` : ''}
       </div>`);
       cell.onclick = () => { ui.cursor = d; ui.view = 'week'; ui.weekScroll = null; renderAll(); };
@@ -378,113 +610,39 @@
     return wrap;
   }
 
-  // ---------- Metas ----------
-  function renderGoals() {
-    const today = DU.today();
-    const wrap = el(`<div class="goals-view">
-      <div class="goals-top"><div><h2>Mis metas</h2><div class="hint">Marca cada día lo que cumpliste y mantén tus rachas 🔥. Toca un cuadrito para marcar días anteriores.</div></div>
-      <button class="btn primary" id="addGoal">＋ Nueva meta</button></div>
-      <div class="goals-grid"></div></div>`);
-    $('#addGoal', wrap).onclick = () => openGoalModal();
-    const grid = $('.goals-grid', wrap);
-    state.goals.forEach((g) => {
-      const s = streakOf(g);
-      const doneToday = isDoneGoal(g, today);
-      const days = [...Array(28)].map((_, i) => DU.addDays(today, i - 27));
-      const card = el(`<div class="goal-card">
-        <div class="gh"><span class="gi">${esc(g.icon)}</span>
-          <div><b>${esc(g.title)}</b><small>${g.freq === 'daily' ? 'Todos los días' : `${g.target} ${g.target === 1 ? 'vez' : 'veces'} por semana`}${g.optional ? ' · opcional' : ''}</small></div>
-          <div class="actions"><button class="icon-btn sm" data-a="edit" title="Editar">✏️</button><button class="icon-btn sm" data-a="del" title="Eliminar">🗑️</button></div>
-        </div>
-        ${g.note ? `<div class="hint">${esc(g.note)}</div>` : ''}
-        <div class="streaks">
-          <div class="streak"><b>🔥 ${s.current}</b><small>racha actual (${s.unit})</small></div>
-          <div class="streak"><b>🏆 ${s.best}</b><small>mejor racha</small></div>
-          ${g.freq === 'weekly' ? `<div class="streak"><b>${s.week}/${g.target}</b><small>esta semana</small></div>` : ''}
-        </div>
-        <div class="heat">${days.map((d) => `<div class="hc ${isDoneGoal(g, d) ? 'on' : ''} ${d === today ? 'today' : ''}" data-d="${d}" title="${DU.pretty(d)}${isDoneGoal(g, d) ? ' ✓' : ''}"></div>`).join('')}</div>
-        <div class="heat-labels"><span>hace 4 semanas</span><span>hoy</span></div>
-        <button class="btn ${doneToday ? '' : 'primary'}" data-a="today">${doneToday ? '✓ Cumplida hoy (deshacer)' : 'Marcar como cumplida hoy'}</button>
-      </div>`);
-      $$('.hc', card).forEach((c) => (c.onclick = () => toggleGoal(g.id, c.dataset.d)));
-      $('[data-a=today]', card).onclick = () => toggleGoal(g.id, today);
-      $('[data-a=edit]', card).onclick = () => openGoalModal(g);
-      $('[data-a=del]', card).onclick = async () => {
-        if (await confirmBox(`¿Eliminar la meta "${g.title}" y su historial?`, 'Eliminar', true)) {
-          state.goals = state.goals.filter((x) => x !== g);
-          delete state.goalLog[g.id];
-          commit();
-        }
-      };
-      if (g.id === 'biz' || g.ideas) {
-        g.ideas = g.ideas || [];
-        const box = el(`<div class="ideas"><b style="font-size:13px">Ideas de negocio</b>
-          ${g.ideas.map((it, i) => `<div class="idea"><span>💡 ${esc(it)}</span><button class="icon-btn sm" data-i="${i}" title="Quitar">✕</button></div>`).join('') || '<div class="hint">Anota aquí tus ideas para no perderlas.</div>'}
-          <form class="idea-form"><input type="text" placeholder="Nueva idea…"><button class="btn sm">Agregar</button></form>
-          <button class="btn sm" data-a="plan">🗓️ Proponer tiempo esta semana</button></div>`);
-        $$('[data-i]', box).forEach((b) => (b.onclick = () => { g.ideas.splice(+b.dataset.i, 1); commit(); }));
-        $('form', box).onsubmit = (e) => {
-          e.preventDefault();
-          const v = $('input', box).value.trim();
-          if (v) { g.ideas.push(v); commit(); }
-        };
-        $('[data-a=plan]', box).onclick = () => openPlanModal(null, { goal: g });
-        card.appendChild(box);
-      }
-      grid.appendChild(card);
-    });
-    return wrap;
-  }
-
-  function openGoalModal(g) {
-    const isNew = !g;
-    const v = g ? { ...g } : { title: '', icon: '⭐', freq: 'daily', target: 3 };
-    const m = openModal(`
-      <div class="modal-head"><h2>${isNew ? 'Nueva meta' : 'Editar meta'}</h2><button class="icon-btn" data-close>✕</button></div>
-      <div class="modal-body">
-        <div class="row"><label class="field" style="flex:0 0 80px"><span>Ícono</span><input type="text" id="gIcon" value="${esc(v.icon)}" maxlength="4"></label>
-        <label class="field"><span>Meta</span><input type="text" id="gTitle" value="${esc(v.title)}" placeholder="Ej: Hacer ejercicio de respiración"></label></div>
-        <div class="row"><label class="field"><span>Frecuencia</span><select id="gFreq"><option value="daily">Todos los días</option><option value="weekly">X veces por semana</option></select></label>
-        <label class="field" id="gTargetWrap"><span>Veces por semana</span><input type="number" id="gTarget" min="1" max="7" value="${v.target || 3}"></label></div>
-        <label class="field"><span>Nota (opcional)</span><input type="text" id="gNote" value="${esc(v.note || '')}"></label>
-      </div>
-      <div class="modal-foot"><span class="spacer"></span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="gSave">Guardar</button></div>`);
-    const r = m.root;
-    $('#gFreq', r).value = v.freq;
-    const sync = () => { $('#gTargetWrap', r).style.visibility = $('#gFreq', r).value === 'weekly' ? 'visible' : 'hidden'; };
-    $('#gFreq', r).onchange = sync; sync();
-    $('#gSave', r).onclick = () => {
-      const title = $('#gTitle', r).value.trim();
-      if (!title) { $('#gTitle', r).focus(); return; }
-      const data = { title, icon: $('#gIcon', r).value.trim() || '⭐', freq: $('#gFreq', r).value,
-        target: Math.max(1, Math.min(7, +$('#gTarget', r).value || 1)), note: $('#gNote', r).value.trim() };
-      if (isNew) state.goals.push({ id: uid(), ...data });
-      else Object.assign(g, data);
-      if (g && g.id === 'sleep') {
-        const mm = title.match(/(\d{1,2})[:.](\d{2})/);
-        if (mm) { let hh = +mm[1]; if (hh < 12) hh += 12; state.settings.bedtime = DU.toTime(hh * 60 + +mm[2]); }
-      }
-      m.close();
-      commit();
-    };
-  }
-
   // ---------- Lateral ----------
-  function renderSidebar() {
+  function renderMiniMonth() {
+    const box = $('#miniMonth');
+    const cur = DU.parse(ui.miniCursor);
+    const first = DU.fmt(new Date(cur.getFullYear(), cur.getMonth(), 1));
+    const start = DU.startOfWeek(first);
     const today = DU.today();
-    const d = DU.parse(today);
-    $('#todayTitle').textContent = `Hoy · ${DU.DAYS[d.getDay()]} ${d.getDate()} de ${DU.MONTHS[d.getMonth()]}`;
-    const s = state.summary;
-    if (!s || s.date !== today) $('#summaryText').textContent = AI.localSummary(state);
-    else $('#summaryText').textContent = s.text;
+    const wk = DU.startOfWeek(ui.cursor);
+    let cells = '';
+    for (let i = 0; i < 42; i++) {
+      const d = DU.addDays(start, i);
+      const dd = DU.parse(d);
+      const evs = state.events.filter((e) => e.date === d && !e.done && (e.type === 'examen' || e.type === 'tarea'));
+      const inWeek = ui.view === 'week' && d >= wk && d <= DU.addDays(wk, 6);
+      cells += `<button class="mm ${dd.getMonth() !== cur.getMonth() ? 'other' : ''} ${d === today ? 'today' : ''} ${inWeek ? 'inweek' : ''}" data-d="${d}" title="${DU.pretty(d)}${evs.length ? ' · ' + esc(evs.map((e) => e.title).join(', ')) : ''}">${dd.getDate()}${evs.length ? `<i class="${evs.some((e) => e.type === 'examen') ? 'ex' : 'ta'}"></i>` : ''}</button>`;
+    }
+    box.innerHTML = `<div class="mm-head"><button class="icon-btn sm" data-m="-1">${icon('left', 14)}</button>
+      <b>${DU.MONTHS[cur.getMonth()]} ${cur.getFullYear()}</b><button class="icon-btn sm" data-m="1">${icon('right', 14)}</button></div>
+      <div class="mm-grid">${['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((x) => `<span>${x}</span>`).join('')}${cells}</div>`;
+    $$('[data-m]', box).forEach((b) => (b.onclick = () => { ui.miniCursor = DU.fmt(new Date(cur.getFullYear(), cur.getMonth() + +b.dataset.m, 1)); renderMiniMonth(); }));
+    $$('.mm', box).forEach((b) => (b.onclick = () => { ui.cursor = b.dataset.d; ui.view = 'week'; ui.weekScroll = null; renderAll(); }));
+  }
 
+  function renderSidebar() {
+    renderMiniMonth();
+    const today = DU.today();
     const tg = $('#todayGoals');
     tg.innerHTML = '';
     state.goals.forEach((g) => {
       const done = isDoneGoal(g, today);
       const st = streakOf(g);
-      const row = el(`<div class="goal-row ${done ? 'done' : ''}"><span class="check">${done ? '✓' : ''}</span><span class="gi">${esc(g.icon)}</span>
-        <span class="gt">${esc(g.title)}</span><span class="gs">${g.freq === 'weekly' ? `${st.week}/${g.target} sem` : `🔥 ${st.current}`}</span></div>`);
+      const row = el(`<div class="goal-row ${done ? 'done' : ''}"><span class="check">${done ? icon('check', 13) : ''}</span><span class="gi">${esc(g.icon)}</span>
+        <span class="gt">${esc(g.title)}</span><span class="gs">${g.freq === 'weekly' ? `${st.week}/${g.target}` : `🔥${st.current}`}</span></div>`);
       row.onclick = () => toggleGoal(g.id, today);
       tg.appendChild(row);
     });
@@ -497,21 +655,22 @@
       && (ui.showDone || !e.done)
       && ((e.date >= today && e.date <= horizon) || (e.type === 'tarea' && !e.done && e.date < today && DU.diffDays(e.date, today) <= 14)))
       .sort((a, b) => (a.date + (a.start || '')).localeCompare(b.date + (b.start || '')))
-      .slice(0, 14);
-    if (!list.length) up.innerHTML = '<div class="empty">Nada pendiente 🎉<br>Dile a Luna "tengo examen de…"</div>';
+      .slice(0, 12);
+    if (!list.length) up.innerHTML = '<div class="empty">Nada pendiente 🎉<br>Escribe abajo "examen de…"</div>';
     list.forEach((e) => {
       const n = DU.diffDays(today, e.date);
       const cls = n <= 1 ? 'hot' : n <= 3 ? 'warm' : '';
       const kids = childrenOf(e.id);
       const needsPlan = (e.type === 'examen' || e.type === 'tarea') && !e.done && !kids.length && e.estMinutes;
-      const color = e.subject && SUBJECTS[e.subject] ? SUBJECTS[e.subject].color : `var(--${e.type === 'examen' ? 'exam' : e.type === 'tarea' ? 'task' : e.type === 'meta' ? 'goal' : 'event'})`;
-      const item = el(`<div class="up-item ${e.done ? 'done' : ''}">
-        <span class="bar" style="background:${color}"></span>
+      const s = subjOf(e);
+      const boss = (e.type === 'examen' || e.type === 'tarea') && !e.done && e.estMinutes ? bossOf(e) : null;
+      const item = el(`<div class="up-item ${e.done ? 'done' : ''}" style="--sc:${s ? s.color : 'var(--accent)'}">
+        <div class="up-icon">${s ? s.icon : TYPE[e.type].icon}</div>
         <div style="min-width:0;flex:1">
-          <div class="ut">${TYPE[e.type].icon} ${esc(e.title)}</div>
-          <div class="um">${DU.prettyShort(e.date)} ${e.start || ''}${e.importance ? ` · <span class="dots" title="Importancia ${e.importance}/5">${stars(e.importance)}</span>` : ''}</div>
-          ${kids.length ? `<div class="um">🧠 ${kids.filter((k) => k.done).length}/${kids.length} sesiones</div>` : ''}
-          ${needsPlan ? '<button class="link" data-plan>🧠 Proponer plan de estudio</button>' : ''}
+          <div class="ut">${esc(shortTitle(e))}</div>
+          <div class="um">${DU.prettyShort(e.date)} · ${e.start || ''}${e.importance ? ` · <span class="dots" title="Importancia ${e.importance}/5">${stars(e.importance)}</span>` : ''}</div>
+          ${boss ? `<div class="hp-row" title="Vida del jefe: ${boss.hp} de ${boss.maxHP} min"><span>${boss.face}</span><div class="hp"><i style="width:${boss.pct}%"></i></div><small>${boss.pct}%</small></div>` : ''}
+          ${needsPlan ? '<button class="link" data-plan>🧠 Proponer plan</button>' : ''}
         </div>
         <span class="when ${cls}">${n < 0 ? 'atrasada' : DU.relative(e.date)}</span>
       </div>`);
@@ -522,23 +681,18 @@
     });
   }
 
+  function summaryText() {
+    const s = state.summary;
+    return s && s.date === DU.today() ? s.text : AI.localSummary(state);
+  }
   async function refreshSummary(force = false) {
     const today = DU.today();
     if (!force && state.summary && state.summary.date === today) return;
-    if (!state.settings.geminiKey) {
-      state.summary = null;
-      $('#summaryText').textContent = AI.localSummary(state);
-      return;
-    }
-    const box = $('#summaryText');
-    box.classList.add('loading');
+    if (!state.settings.geminiKey) { state.summary = null; return; }
     try {
       const text = await AI.dailySummaryAI(state);
-      if (text) { state.summary = { date: today, text }; persist(); box.textContent = text; }
-    } catch (e) {
-      box.textContent = AI.localSummary(state);
-      if (force) toast(e.message);
-    } finally { box.classList.remove('loading'); }
+      if (text) { state.summary = { date: today, text }; persist(); const box = $('#lunaSays'); if (box) box.textContent = text; }
+    } catch (e) { if (force) toast(e.message); }
   }
 
   // =========================================================
@@ -549,33 +703,39 @@
     const timeOpts = type === 'evento' ? [30, 60, 90, 120, 180, 240] : [30, 60, 90, 120, 180, 240, 360];
     const tLabel = type === 'evento' ? '¿Cuánto tiempo te ocupará ese día?' : type === 'tarea' ? '¿Cuánto tiempo te costará hacerla?' : '¿Cuánto tiempo necesitas para prepararlo?';
     const custom = v.estMinutes && !timeOpts.includes(v.estMinutes) ? String(+(v.estMinutes / 60).toFixed(2)) : '';
+    const sf = (type === 'examen' || type === 'tarea') ? subjectFactor(v.subject) : null;
+    let learn = '';
+    if (sf && Math.abs(sf.factor - 1) >= 0.08) {
+      const pct = Math.round(Math.abs(sf.factor - 1) * 100);
+      const s = SUBJECTS[v.subject];
+      const sug = v.estMinutes ? Math.max(15, Math.round(v.estMinutes * sf.factor / 15) * 15) : null;
+      learn = `<div class="learn">🧠 Según tus exámenes anteriores, en ${esc(s.name)} sueles necesitar <b>${pct}% ${sf.factor > 1 ? 'más' : 'menos'}</b> tiempo del que calculas.
+        ${sug && sug !== v.estMinutes ? `<button type="button" class="link" data-sug="${sug}">Usar ${DU.fmtDur(sug)}</button>` : ''}</div>`;
+    }
+    const faces = ['', '😌', '🙂', '😐', '😬', '😱'];
     return `<div class="questions">
       <div class="qh">🤔 Cuéntame un poco más ${v.estimated ? '<small>(Luna lo estimó — ajústalo si no es así)</small>' : ''}</div>
       <div class="q" data-q="importance"><label>¿Qué tan importante es?<em>${IMP[v.importance] || ''}</em></label>
-        <div class="scale">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.importance === n ? 'sel' : ''}" title="${IMP[n]}">${n}</button>`).join('')}</div></div>
+        <div class="scale imp">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.importance === n ? 'sel' : ''} ${v.importance >= n ? 'fill' : ''}" title="${IMP[n]}">★</button>`).join('')}</div></div>
       <div class="q" data-q="difficulty"><label>¿Qué tan difícil es para ti?<em>${DIF[v.difficulty] || ''}</em></label>
-        <div class="scale diff">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.difficulty === n ? 'sel' : ''}" title="${DIF[n]}">${n}</button>`).join('')}</div></div>
+        <div class="scale diff">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.difficulty === n ? 'sel' : ''}" title="${DIF[n]}">${faces[n]}</button>`).join('')}</div></div>
       <div class="q" data-q="estMinutes"><label>${tLabel}<em>${v.estMinutes ? DU.fmtDur(v.estMinutes) : ''}</em></label>
         <div class="timechips">${timeOpts.map((n) => `<button type="button" data-v="${n}" class="${v.estMinutes === n ? 'sel' : ''}">${DU.fmtDur(n)}</button>`).join('')}
-        <input type="number" min="0.25" step="0.25" placeholder="otro (h)" value="${custom}" title="Horas"></div></div>
+        <input type="number" min="0.25" step="0.25" placeholder="otro (h)" value="${custom}" title="Horas"></div>${learn}</div>
     </div>`;
   }
 
   function bindQuestions(root, v, onChange) {
     const q = $('.questions', root);
-    const rerender = () => {
-      const fresh = el(questionsHTML(v));
-      q.replaceWith(fresh);
-      bindQuestions(root, v, onChange);
-    };
+    if (!q) return;
+    const rerender = () => { q.replaceWith(el(questionsHTML(v))); bindQuestions(root, v, onChange); };
     $$('.q', q).forEach((box) => {
       const key = box.dataset.q;
-      $$('button', box).forEach((b) => (b.onclick = () => {
-        v[key] = +b.dataset.v;
-        v.estimated = false;
-        onChange && onChange(key);
-        rerender();
+      $$('button[data-v]', box).forEach((b) => (b.onclick = () => {
+        v[key] = +b.dataset.v; v.estimated = false; onChange && onChange(key); rerender();
       }));
+      const sug = $('[data-sug]', box);
+      if (sug) sug.onclick = () => { v.estMinutes = +sug.dataset.sug; onChange && onChange('estMinutes'); rerender(); };
       const inp = $('input', box);
       if (inp) inp.onchange = () => {
         const hrs = parseFloat(inp.value);
@@ -585,9 +745,36 @@
   }
 
   function missingQuestions(v) {
-    const type = v.type || v.kind;
+    const type = v.kind || v.type;
     if (type !== 'examen' && type !== 'tarea') return [];
     return ['importance', 'difficulty', 'estMinutes'].filter((k) => !v[k]);
+  }
+
+  // ---------- resultado de un examen ----------
+  function resultHTML(v) {
+    const scale = state.settings.gradeScale || 20;
+    return `<div class="result-box">
+      <div class="qh">🎯 ¿Cómo te fue?</div>
+      <div class="row">
+        <label class="field" style="flex:0 0 120px"><span>Nota (sobre ${scale})</span><input type="number" class="r-grade" min="0" max="${scale}" step="0.5" value="${v.grade != null ? v.grade : ''}" placeholder="—"></label>
+        <div class="field"><span>El tiempo que estudiaste fue…</span>
+          <div class="feel">${[['poco', '😰 Poco'], ['justo', '👌 Justo'], ['sobro', '😎 Me sobró']].map(([k, l]) => `<button type="button" data-f="${k}" class="${v.prepFeel === k ? 'sel' : ''}">${l}</button>`).join('')}</div></div>
+      </div></div>`;
+  }
+  function bindResult(root, v) {
+    $$('.feel button', root).forEach((b) => (b.onclick = () => {
+      v.prepFeel = b.dataset.f;
+      $$('.feel button', root).forEach((x) => x.classList.toggle('sel', x === b));
+    }));
+    const g = $('.r-grade', root);
+    g.oninput = () => { v.grade = g.value === '' ? null : +g.value; };
+  }
+  function saveResult(ev, v) {
+    if (v.grade == null && !v.prepFeel) return false;
+    ev.grade = v.grade; ev.prepFeel = v.prepFeel; ev.resultDone = true; ev.done = true;
+    const scale = state.settings.gradeScale || 20;
+    if (v.grade != null && v.grade >= scale * 0.85) { FX.confetti({ count: 120 }); FX.chime('win'); }
+    return true;
   }
 
   // =========================================================
@@ -601,12 +788,13 @@
     };
     let titleTouched = !!v.title;
     let timeTouched = !!init.start || !!editing;
+    const isPastExam = !!editing && editing.type === 'examen' && (editing.resultDone || pendingResults().includes(editing));
 
     const subjOptions = `<option value="">— Ninguna —</option>` +
-      Object.entries(SUBJECTS).map(([k, s]) => `<option value="${k}">${esc(s.name)}</option>`).join('');
+      Object.entries(SUBJECTS).map(([k, s]) => `<option value="${k}">${s.icon} ${esc(s.name)}</option>`).join('');
 
     const m = openModal(`
-      <div class="modal-head"><h2>${editing ? 'Editar' : 'Nuevo'}</h2><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-head"><h2>${editing ? 'Editar' : 'Nuevo'}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
       <div class="modal-body">
         <div class="type-chips">${Object.entries(TYPE).map(([k, t]) => `<button type="button" data-t="${k}" class="t-${k}">${t.icon} ${t.label}</button>`).join('')}</div>
         <label class="field"><span>Título</span><input type="text" id="fTitle" placeholder="Ej: Examen de Matemática – derivadas"></label>
@@ -620,16 +808,18 @@
         </div>
         <div id="timeHint" class="hint"></div>
         <div id="qWrap"></div>
-        <label class="field"><span>Notas / temas</span><textarea id="fNotes" rows="2" placeholder="Ej: entra capítulo 3 y 4, traer calculadora"></textarea></label>
+        <label class="field"><span>Notas / temas <small>(sepáralos con comas: serán tu lista en el modo concentración)</small></span><textarea id="fNotes" rows="2" placeholder="Ej: derivadas, regla de la cadena, límites"></textarea></label>
+        ${isPastExam ? resultHTML(v) : ''}
         ${editing && editing.parentId && getEv(editing.parentId) ? `<div class="callout">🧠 Sesión del plan de <b>${esc(getEv(editing.parentId).title)}</b></div>` : ''}
       </div>
       <div class="modal-foot">
-        ${editing ? '<button class="btn danger" id="fDel">Eliminar</button>' : ''}
+        ${editing ? `<button class="btn danger icon-only" id="fDel" title="Eliminar">${icon('trash', 16)}</button>` : ''}
         ${editing ? `<button class="btn" id="fDone">${editing.done ? '↩ No hecho' : '✓ Hecho'}</button>` : ''}
+        ${editing && editing.type === 'estudio' && !editing.done ? `<button class="btn" id="fFocus">${icon('play', 14)} Concentrarme</button>` : ''}
         <span class="spacer"></span>
         <button class="btn" data-close>Cancelar</button>
         <button class="btn" id="fSave">Guardar</button>
-        <button class="btn primary" id="fSavePlan">Guardar y planificar estudio</button>
+        <button class="btn primary" id="fSavePlan">Guardar y planificar</button>
       </div>`);
     const r = m.root;
     const f = { title: $('#fTitle', r), subject: $('#fSubject', r), date: $('#fDate', r), start: $('#fStart', r), end: $('#fEnd', r), notes: $('#fNotes', r) };
@@ -639,6 +829,7 @@
     f.start.value = v.start || '';
     f.end.value = v.end || '';
     f.notes.value = v.notes || '';
+    if (isPastExam) bindResult(r, v);
 
     const autoTitle = () => {
       if (titleTouched) return;
@@ -665,15 +856,13 @@
       $$('.type-chips button', r).forEach((b) => b.classList.toggle('sel', b.dataset.t === v.type));
       $('#lblStart', r).textContent = v.type === 'tarea' ? 'Hora de entrega' : 'Hora';
       const wq = $('#qWrap', r);
-      if (['examen', 'tarea', 'evento'].includes(v.type)) {
+      if (['examen', 'tarea', 'evento'].includes(v.type) && !isPastExam) {
         wq.innerHTML = questionsHTML(v);
         bindQuestions(wq, v, (key) => {
-          if (key === 'estMinutes' && v.type === 'evento' && f.start.value) {
-            f.end.value = DU.toTime(DU.toMin(f.start.value) + v.estMinutes);
-          }
+          if (key === 'estMinutes' && v.type === 'evento' && f.start.value) f.end.value = DU.toTime(DU.toMin(f.start.value) + v.estMinutes);
         });
       } else wq.innerHTML = '';
-      const planable = v.type === 'examen' || v.type === 'tarea';
+      const planable = (v.type === 'examen' || v.type === 'tarea') && !isPastExam;
       $('#fSavePlan', r).style.display = planable ? '' : 'none';
       $('#fSave', r).classList.toggle('primary', !planable);
       if (editing && planable && childrenOf(editing.id).length) $('#fSavePlan', r).textContent = 'Guardar y rehacer plan';
@@ -681,32 +870,29 @@
 
     $$('.type-chips button', r).forEach((b) => (b.onclick = () => { v.type = b.dataset.t; autoTitle(); autoTime(); syncType(); }));
     f.title.oninput = () => { titleTouched = !!f.title.value.trim(); };
-    f.subject.onchange = () => { v.subject = f.subject.value || null; autoTitle(); autoTime(); };
+    f.subject.onchange = () => { v.subject = f.subject.value || null; autoTitle(); autoTime(); syncType(); };
     f.date.onchange = () => { v.date = f.date.value; autoTime(); };
     f.start.onchange = () => {
       timeTouched = true;
-      const dur = (DU.toMin(v.end) || 0) - (DU.toMin(v.start) || 0);
+      const d0 = (DU.toMin(v.end) || 0) - (DU.toMin(v.start) || 0);
       v.start = f.start.value;
-      if (v.start) { v.end = DU.toTime(DU.toMin(v.start) + (dur > 0 ? dur : 60)); f.end.value = v.end; }
+      if (v.start) { v.end = DU.toTime(DU.toMin(v.start) + (d0 > 0 ? d0 : 60)); f.end.value = v.end; }
     };
     f.end.onchange = () => { timeTouched = true; v.end = f.end.value; };
 
     syncType();
     if (!editing) { autoTitle(); autoTime(); }
-    setTimeout(() => (editing || init.subject ? null : f.title.focus()), 50);
+    setTimeout(() => (editing || init.subject || init.title ? null : f.title.focus()), 50);
 
     const doSave = (plan) => {
       v.title = f.title.value.trim();
       v.date = f.date.value; v.start = f.start.value; v.end = f.end.value; v.notes = f.notes.value.trim();
-      if (!v.title) {
-        const s = v.subject && SUBJECTS[v.subject];
-        v.title = s ? `${TYPE[v.type].label} de ${s.name}` : '';
-      }
+      if (!v.title) { const s = v.subject && SUBJECTS[v.subject]; v.title = s ? `${TYPE[v.type].label} de ${s.name}` : ''; }
       if (!v.title) { f.title.focus(); toast('Ponle un título 🙂'); return; }
       if (!v.date) { f.date.focus(); return; }
       if (!v.start) { f.start.focus(); toast('Elige una hora'); return; }
       if (!v.end || DU.toMin(v.end) <= DU.toMin(v.start)) v.end = DU.toTime(DU.toMin(v.start) + 30);
-      const miss = missingQuestions(v);
+      const miss = isPastExam ? [] : missingQuestions(v);
       if (miss.length) {
         miss.forEach((k) => { const q = $(`.q[data-q=${k}]`, r); q && q.classList.add('missing'); });
         toast('Responde las 3 preguntas 👇 así puedo planificar mejor');
@@ -715,8 +901,11 @@
       }
       delete v.estimated;
       let ev;
-      if (editing) { Object.assign(editing, v); ev = editing; }
-      else ev = addEvent(v);
+      if (editing) {
+        const res = { grade: v.grade, prepFeel: v.prepFeel };
+        Object.assign(editing, v); ev = editing;
+        if (isPastExam) saveResult(ev, res);
+      } else ev = addEvent(v);
       m.close();
       commit();
       opts.onSaved && opts.onSaved(ev);
@@ -730,7 +919,9 @@
     $('#fSavePlan', r).onclick = () => doSave(true);
     if (editing) {
       $('#fDel', r).onclick = async () => { m.close(); await deleteEvent(editing); };
-      $('#fDone', r).onclick = () => { setDone(editing, !editing.done); m.close(); commit(); };
+      $('#fDone', r).onclick = () => { markDone(editing, !editing.done); m.close(); commit(); };
+      const fb = $('#fFocus', r);
+      if (fb) fb.onclick = () => { m.close(); App.openFocus(editing); };
     }
     r.addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSave(false); });
   }
@@ -744,16 +935,17 @@
     let result = isBiz ? P.planBusiness(state, goal) : P.planStudy(state, ev);
     let sessions = result.sessions.map((s) => ({ ...s }));
     const existing = isBiz ? [] : childrenOf(ev.id).filter((k) => !k.done && k.date >= today);
+    const boss = isBiz ? null : bossOf(ev);
 
     const m = openModal(`
-      <div class="modal-head"><h2>${isBiz ? '💡 Tiempo para tu negocio' : '🧠 Plan de estudio propuesto'}</h2><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-head"><h2>${isBiz ? '🌱 Tiempo para tu negocio' : `${boss.face} Plan de batalla`}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
       <div class="modal-body">
         <div id="planInfo"></div>
         <div class="plan-list" id="planList"></div>
-        <div><button class="btn sm" id="addRow">＋ Agregar sesión</button></div>
+        <div><button class="btn sm" id="addRow">${icon('plus', 14)} Agregar sesión</button></div>
       </div>
       <div class="modal-foot">
-        <button class="btn" id="recalc">↻ Recalcular</button>
+        <button class="btn" id="recalc">${icon('refresh', 14)} Recalcular</button>
         <span class="spacer"></span>
         <button class="btn" data-close>Ahora no</button>
         <button class="btn primary" id="approve">Aprobar</button>
@@ -764,22 +956,24 @@
       const busy = P.busy(state, s.date, isBiz ? {} : { ignoreParent: ev.id });
       const a = DU.toMin(s.start), b = DU.toMin(s.end);
       const others = sessions.filter((x) => x !== s && x.include && x.date === s.date).map((x) => [DU.toMin(x.start), DU.toMin(x.end)]);
-      const hit = [...busy, ...others].some(([x, y]) => a < y && b > x);
-      const late = b > DU.toMin(state.settings.bedtime);
-      return hit ? '⚠️ Choca con otra actividad' : late ? '🌙 Pasa tu hora de dormir' : '';
+      if ([...busy, ...others].some(([x, y]) => a < y && b > x)) return '⚠️ Choca con otra actividad';
+      if (b > DU.toMin(state.settings.bedtime)) return '🌙 Pasa tu hora de dormir';
+      return '';
     };
 
     const render = () => {
       const inc = sessions.filter((s) => s.include);
       const total = inc.reduce((a, s) => a + (DU.toMin(s.end) - DU.toMin(s.start)), 0);
-      let info = '';
+      let info;
       if (isBiz) {
-        info = `<div class="callout">Bloques para <b>${esc(goal.title)}</b> en los próximos 7 días, solo en huecos que no le quitan tiempo al estudio. Total: <span class="plan-total">${DU.fmtDur(total)}</span>.</div>`;
+        info = `<div class="callout">Bloques para <b>${esc(goal.title)}</b> en los próximos 7 días, solo en huecos que no le quitan tiempo al estudio. Total: <b>${DU.fmtDur(total)}</b>.</div>`;
       } else {
-        info = `<div class="callout"><b>${esc(ev.title)}</b> · ${DU.pretty(ev.date)} ${ev.start || ''}<br>
-          Importancia ${ev.importance || '?'}/5 · Dificultad ${ev.difficulty || '?'}/5 · Tiempo estimado ${DU.fmtDur(ev.estMinutes || 0)}<br>
-          Seleccionado: <span class="plan-total">${DU.fmtDur(total)}</span> en ${inc.length} ${inc.length === 1 ? 'sesión' : 'sesiones'}. Cambia fechas u horas si quieres y aprueba.</div>`;
-        if (existing.length) info += `<div class="callout warn">Al aprobar se reemplazan las ${existing.length} sesiones pendientes que ya tenías para este examen/tarea.</div>`;
+        const left = Math.max(0, boss.hp - total);
+        info = `<div class="boss-banner"><span class="bf">${boss.face}</span><div style="flex:1"><b>${esc(boss.name)}</b> · ${esc(ev.title)} · ${DU.pretty(ev.date)}<br>
+          <small>Vida ${DU.fmtDur(boss.maxHP)} · Importancia ${stars(ev.importance)} · Dificultad ${ev.difficulty || '?'}/5</small>
+          <div class="hp big"><i style="width:${Math.round(left / boss.maxHP * 100)}%"></i></div>
+          <small>${left === 0 ? `Con estas ${inc.length} sesiones (${DU.fmtDur(total)}) lo derrotas antes del examen ⚔️` : `Con estas sesiones le quitas ${DU.fmtDur(boss.hp - left)}; le quedarían ${DU.fmtDur(left)} de vida`}.</small></div></div>`;
+        if (existing.length) info += `<div class="callout warn">Al aprobar se reemplazan las ${existing.length} sesiones pendientes que ya tenías.</div>`;
       }
       if (result.note) info += `<div class="callout warn">${esc(result.note)}</div>`;
       $('#planInfo', r).innerHTML = info;
@@ -787,22 +981,21 @@
       const list = $('#planList', r);
       list.innerHTML = '';
       if (!sessions.length) list.innerHTML = '<div class="empty">No hay sesiones propuestas. Agrega una a mano.</div>';
-      sessions.forEach((s, i) => {
+      sessions.forEach((s) => {
         const c = conflict(s);
         const row = el(`<div class="plan-row ${s.include ? '' : 'off'}">
           <input type="checkbox" ${s.include ? 'checked' : ''} title="Incluir">
           <input type="date" value="${s.date}" min="${today}">
-          <input type="time" value="${s.start}" class="ps">
-          <input type="time" value="${s.end}" class="pe">
+          <input type="time" value="${s.start}">
+          <input type="time" value="${s.end}">
           <div class="pdesc"><div class="pt">${esc(s.title)}</div><div class="pd">${DU.prettyShort(s.date)} · ${DU.fmtDur(DU.toMin(s.end) - DU.toMin(s.start))} ${c ? '· ' + c : ''}</div></div>
         </div>`);
         const [chk, di, si, ei] = $$('input', row);
         chk.onchange = () => { s.include = chk.checked; render(); };
         di.onchange = () => { s.date = di.value; render(); };
-        si.onchange = () => { const dur = DU.toMin(s.end) - DU.toMin(s.start); s.start = si.value; s.end = DU.toTime(DU.toMin(si.value) + dur); render(); };
+        si.onchange = () => { const d0 = DU.toMin(s.end) - DU.toMin(s.start); s.start = si.value; s.end = DU.toTime(DU.toMin(si.value) + d0); render(); };
         ei.onchange = () => { if (DU.toMin(ei.value) > DU.toMin(s.start)) s.end = ei.value; render(); };
         list.appendChild(row);
-        row.dataset.i = i;
       });
       $('#approve', r).textContent = `Aprobar (${inc.length})`;
       $('#approve', r).disabled = !inc.length && !existing.length;
@@ -822,16 +1015,12 @@
         slot = P.freeSlots(state, d, { minLen: 30, ignoreParent: isBiz ? undefined : ev.id })[0];
       }
       const s0 = slot ? slot[0] : 17 * 60;
-      sessions.push({ date: d, start: DU.toTime(s0), end: DU.toTime(s0 + 45), include: true,
-        title: isBiz ? goal.title : `Estudiar: ${ev.title}` });
+      sessions.push({ date: d, start: DU.toTime(s0), end: DU.toTime(s0 + 45), include: true, title: isBiz ? goal.title : `Estudiar: ${ev.title}` });
       render();
     };
     $('#approve', r).onclick = () => {
       const inc = sessions.filter((s) => s.include);
-      if (existing.length) {
-        const ids = new Set(existing.map((e) => e.id));
-        state.events = state.events.filter((e) => !ids.has(e.id));
-      }
+      if (existing.length) { const ids = new Set(existing.map((e) => e.id)); state.events = state.events.filter((e) => !ids.has(e.id)); }
       inc.forEach((s) => addEvent({
         type: isBiz ? 'meta' : 'estudio', title: s.title, date: s.date, start: s.start, end: s.end,
         subject: isBiz ? null : ev.subject, parentId: isBiz ? null : ev.id, goalId: isBiz ? goal.id : null,
@@ -839,21 +1028,88 @@
       }));
       m.close();
       commit();
-      toast(`✅ ${inc.length} ${inc.length === 1 ? 'sesión agregada' : 'sesiones agregadas'} al calendario`);
-      if (inc.length && ui.view === 'week') { ui.cursor = inc[0].date; ui.weekScroll = null; renderAll(); }
+      FX.chime('ok');
+      toast(`✅ ${inc.length} ${inc.length === 1 ? 'sesión agregada' : 'sesiones agregadas'} al calendario`,
+        inc.length ? [{ label: 'Ver semana', fn: () => { ui.view = 'week'; ui.cursor = inc[0].date; ui.weekScroll = null; renderAll(); } }] : [], 6000);
     };
   }
 
   // =========================================================
-  //  Chat con la asistente
+  //  Barra rápida (escribir o dictar)
+  // =========================================================
+  function setupQuickbar() {
+    const input = $('#quickInput');
+    const prev = $('#quickPreview');
+    let parsed = null;
+    const update = () => {
+      parsed = AI.quickParse(state, input.value);
+      if (!input.value.trim()) { prev.innerHTML = '<span class="qp-hint">Ej: <i>examen de física el miércoles</i> · <i>tarea de inglés para el 20/11</i> · <i>cumpleaños de Sofi el sábado a las 5</i></span>'; return; }
+      if (!parsed) {
+        prev.innerHTML = state.settings.geminiKey ? '<span class="qp-hint">↵ Enter para preguntarle a Luna ✨</span>' : '<span class="qp-hint">Sigue escribiendo… (menciona examen, tarea, cita, cumpleaños…)</span>';
+        return;
+      }
+      const s = parsed.subject && SUBJECTS[parsed.subject];
+      prev.innerHTML = `<span class="qchip t-${parsed.kind}">${TYPE[parsed.kind].icon} ${TYPE[parsed.kind].label}</span>
+        ${s ? `<span class="qchip subj" style="--sc:${s.color}">${s.icon} ${esc(s.name)}</span>` : ''}
+        <span class="qchip">📅 ${DU.prettyShort(parsed.date)} <small>(${DU.relative(parsed.date)})</small></span>
+        <span class="qchip">🕐 ${parsed.start}</span><span class="qp-hint">↵ Enter</span>`;
+    };
+    input.addEventListener('input', update);
+    update();
+    input.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      if (parsed) {
+        const p = parsed;
+        input.value = ''; update();
+        openEventModal({ type: p.kind, title: p.title, subject: p.subject || null, date: p.date, start: p.start, end: p.end, notes: p.notes || '' });
+      } else if (state.settings.geminiKey) {
+        input.value = ''; update();
+        openChat(); sendChat(text);
+      } else {
+        toast('No entendí 🤔 Prueba con "examen de mate el jueves" o conecta la IA en Ajustes');
+      }
+    });
+    setupMic($('#quickMic'), input, update);
+  }
+
+  function setupMic(btn, input, onChange, onFinal) {
+    if (!btn) return;
+    if (!FX.canListen) { btn.style.display = 'none'; return; }
+    let rec = null;
+    btn.onclick = () => {
+      if (rec) { rec.stop(); return; }
+      btn.classList.add('rec');
+      rec = FX.listen({
+        onText: (t, final) => { input.value = t; onChange && onChange(); if (final && onFinal) onFinal(t); },
+        onEnd: () => { btn.classList.remove('rec'); rec = null; input.focus(); },
+        onError: (msg) => toast('🎤 ' + msg),
+      });
+    };
+  }
+
+  // =========================================================
+  //  Chat con la asistente (burbuja flotante)
   // =========================================================
   const SUGGESTIONS = ['Tengo examen de mate el jueves', '¿Qué tengo esta semana?', 'Planifica mi estudio', 'Propón tiempo para mi negocio'];
 
-  function renderChatStatus() {
-    const s = $('#aiStatus');
-    if (state.settings.geminiKey) { s.textContent = 'IA conectada (Gemini) ✓'; s.className = 'on'; s.style.cursor = ''; s.onclick = null; }
-    else { s.textContent = 'modo básico · conectar IA gratis →'; s.className = ''; s.style.cursor = 'pointer'; s.onclick = () => openSettings('ai'); }
+  function renderLuna() {
+    const mood = lunaMood();
+    $$('.luna-face').forEach((n) => (n.textContent = mood.face));
+    $('#lunaMood').textContent = state.settings.geminiKey ? mood.text : 'modo básico · conectar IA gratis →';
+    $('#lunaMood').classList.toggle('link-like', !state.settings.geminiKey);
+    $('#lunaFab').classList.toggle('unread', ui.unread);
+    $('#lunaFab').title = `Luna: ${mood.text} (tecla L)`;
   }
+  function openChat() {
+    ui.chatOpen = true; ui.unread = false;
+    $('#app').classList.add('chat-open');
+    renderLuna(); renderChat();
+    setTimeout(() => $('#chatInput').focus(), 60);
+  }
+  function closeChat() { ui.chatOpen = false; $('#app').classList.remove('chat-open'); }
 
   function renderChat() {
     const log = $('#chatLog');
@@ -866,7 +1122,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
     }
     state.chat.forEach((msg) => {
       if (msg.text) log.appendChild(el(`<div class="msg ${msg.role === 'user' ? 'user' : 'bot'} ${msg.error ? 'err' : ''}">${esc(msg.text)}</div>`));
-      (msg.actions || []).forEach((a) => log.appendChild(renderActionCard(a, msg)));
+      (msg.actions || []).forEach((a) => log.appendChild(renderActionCard(a)));
     });
     if (ui.chatBusy) log.appendChild(el('<div class="msg bot typing"><span></span><span></span><span></span></div>'));
     log.scrollTop = log.scrollHeight;
@@ -880,22 +1136,17 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
     });
   }
 
-  function resolveAction(a, status, note) {
-    a.status = status;
-    a.note = note;
-    persist();
-    renderChat();
-  }
+  function resolveAction(a, status, note) { a.status = status; a.note = note; persist(); renderChat(); }
 
-  function renderActionCard(a, msg) {
+  function renderActionCard(a) {
     const done = a.status && a.status !== 'pending';
     if (a.type === 'create_event') {
       const kind = TYPE[a.kind] ? a.kind : 'evento';
       a.kind = kind;
       const subj = a.subject && SUBJECTS[a.subject];
       const card = el(`<div class="action-card ${done ? 'resolved' : ''}">
-        <div class="ah"><span class="tag t-${kind}">${TYPE[kind].label}</span><b>${esc(a.title)}</b></div>
-        <div class="meta">📅 ${a.date ? DU.pretty(a.date) : '?'} · ${esc(a.start || '')}${a.end ? '–' + esc(a.end) : ''}${subj ? ' · ' + esc(subj.name) : ''}${a.notes ? '<br>📝 ' + esc(a.notes) : ''}</div>
+        <div class="ah"><span class="tag t-${kind}">${TYPE[kind].label}</span><b>${subj ? subj.icon + ' ' : ''}${esc(a.title)}</b></div>
+        <div class="meta">📅 ${a.date ? DU.pretty(a.date) : '?'} · ${esc(a.start || '')}${a.end ? '–' + esc(a.end) : ''}${a.notes ? '<br>📝 ' + esc(a.notes) : ''}</div>
         ${done ? `<div class="status-note">${esc(a.note || '')}</div>` : `<div class="qwrap">${questionsHTML({ ...a, type: kind })}</div>
         <div class="row-btns">
           ${kind !== 'evento' ? '<button class="btn primary sm" data-a="plan">Guardar y planificar</button>' : ''}
@@ -936,11 +1187,10 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
 
     if (a.type === 'update_event' || a.type === 'delete_event' || a.type === 'plan_study') {
       const ev = getEv(a.id);
-      if (!ev) return el(`<div class="action-card resolved"><div class="meta">No encontré ese evento (quizá ya se borró).</div></div>`);
+      if (!ev) return el('<div class="action-card resolved"><div class="meta">No encontré ese evento (quizá ya se borró).</div></div>');
       let desc = '', btn = '';
       if (a.type === 'update_event') {
-        const ch = a.changes || {};
-        desc = Object.entries(ch).map(([k, val]) => `${k}: <b>${esc(val)}</b>`).join(' · ');
+        desc = Object.entries(a.changes || {}).map(([k, val]) => `${esc(k)}: <b>${esc(val)}</b>`).join(' · ');
         btn = 'Aplicar cambios';
       } else if (a.type === 'delete_event') { desc = 'Se eliminará del calendario.'; btn = 'Eliminar'; }
       else {
@@ -961,7 +1211,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
         if (a.type === 'update_event') {
           const ch = { ...(a.changes || {}) };
           ['importance', 'difficulty', 'estMinutes'].forEach((k) => { if (ch[k] != null) ch[k] = +ch[k]; });
-          if (ch.done != null) setDone(ev, !!ch.done);
+          if (ch.done != null) markDone(ev, !!ch.done);
           delete ch.done; delete ch.id;
           Object.assign(ev, ch);
           commit();
@@ -982,7 +1232,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       if (!a.status) {
         if (g) {
           const date = a.date || DU.today();
-          (state.goalLog[g.id] = state.goalLog[g.id] || {})[date] = true;
+          setGoal(g.id, date, true);
           a.status = 'done'; a.note = `✓ ${g.icon} ${g.title} — ${DU.prettyShort(date)}`;
           persist(); setTimeout(renderAll, 0);
         } else { a.status = 'dismissed'; a.note = 'No encontré esa meta'; }
@@ -1013,7 +1263,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
     if (state.chat.length > 80) state.chat = state.chat.slice(-80);
     ui.chatBusy = true;
     persist();
-    renderChat();
+    renderChat(); renderLuna();
     try {
       const res = await AI.ask(state, text);
       res.actions.forEach((a) => (a.status = a.type === 'check_goal' ? undefined : 'pending'));
@@ -1022,25 +1272,46 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       state.chat.push({ id: uid(), role: 'bot', text: '⚠️ ' + e.message, error: true, at: Date.now() });
     } finally {
       ui.chatBusy = false;
+      if (!ui.chatOpen) ui.unread = true;
       persist();
-      renderChat();
+      renderChat(); renderLuna();
     }
   }
 
   // =========================================================
   //  Ajustes
   // =========================================================
+  const ACCENTS = [
+    ['violeta', 'Violeta', '#5b5bf0', '#8b7bff'],
+    ['raimondi', 'Raimondi', '#138a4a', '#d0283a'],
+    ['oceano', 'Océano', '#0a7cc9', '#16c0b0'],
+    ['atardecer', 'Atardecer', '#ea580c', '#f59e0b'],
+    ['rosa', 'Rosa', '#db2777', '#a855f7'],
+  ];
   function openSettings(focus) {
     const st = state.settings;
     const routines = JSON.parse(JSON.stringify(state.routines));
     const noSchool = [...st.noSchoolDates];
+    let accent = st.accent || 'violeta';
+    let saved = false;
     const notifState = !('Notification' in window) ? 'Tu navegador no soporta notificaciones.'
       : Notification.permission === 'granted' ? (st.notifications ? '✅ Activadas' : 'Permiso concedido, pero desactivadas')
         : Notification.permission === 'denied' ? '❌ Bloqueadas en el navegador (actívalas en el candado de la barra de direcciones)' : 'Aún no activadas';
 
     const m = openModal(`
-      <div class="modal-head"><h2>⚙️ Ajustes</h2><button class="icon-btn" data-close>✕</button></div>
+      <div class="modal-head"><h2>Ajustes</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
       <div class="modal-body settings">
+        <section>
+          <h4>🎨 Apariencia</h4>
+          <div class="field"><span>Color</span><div class="swatches">${ACCENTS.map(([k, n, a, b]) => `<button type="button" data-acc="${k}" class="${accent === k ? 'sel' : ''}" title="${n}"><i style="background:linear-gradient(135deg,${a},${b})"></i>${n}</button>`).join('')}</div></div>
+          <div class="row">
+            <label class="field"><span>Tema</span><select id="sTheme"><option value="auto">Automático (como el sistema)</option><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
+            <label class="field"><span>Notas de exámenes sobre</span><select id="sScale"><option value="20">20</option><option value="10">10</option><option value="100">100</option></select></label>
+          </div>
+          <label class="switch"><input type="checkbox" id="sNight" ${st.nightMode ? 'checked' : ''}><span>🌙 Modo noche automático: desde 30 min antes de dormir la app se oscurece y te propone leer 10 min</span></label>
+          <label class="switch"><input type="checkbox" id="sExpand" ${st.expandSchool ? 'checked' : ''}><span>🏫 Mostrar el colegio expandido en la semana</span></label>
+          <div><button class="btn sm" id="sTour">${icon('help', 14)} Ver el recorrido otra vez</button></div>
+        </section>
         <section id="secAI">
           <h4>✨ Asistente con IA (gratis)</h4>
           <div class="hint">Luna usa Google Gemini, que tiene un plan gratuito. Solo necesitas una clave (API key):</div>
@@ -1070,9 +1341,9 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
         </section>
         <section>
           <h4>⚽ Actividades fijas</h4>
-          <div class="hint">Luna nunca propone estudio en estos horarios. Después de cada actividad cuenta el camino y el almuerzo/baño.</div>
+          <div class="hint">Luna nunca propone estudio en estos horarios.</div>
           <div id="routineList" style="display:flex;flex-direction:column;gap:6px"></div>
-          <div><button class="btn sm" id="addRoutine">＋ Agregar actividad</button></div>
+          <div><button class="btn sm" id="addRoutine">${icon('plus', 14)} Agregar actividad</button></div>
         </section>
         <section>
           <h4>🏫 Colegio</h4>
@@ -1081,30 +1352,33 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
             <label class="field"><span>Agregar día sin clases</span><div class="row"><input type="date" id="sNoSchool"><button class="btn sm" id="addNoSchool" style="flex:0">＋</button></div></label>
           </div>
           <div id="noSchoolList" class="type-chips"></div>
-          <div class="hint">También puedes tocar 🏫 en la cabecera de cada día de la semana.</div>
         </section>
         <section>
           <h4>🔔 Recordatorios</h4>
-          <div class="hint">Te aviso la noche anterior (19:00) y la mañana de cada examen/tarea, 10 min antes de cada sesión de estudio y a la hora de leer/dormir. Funciona mientras la app esté abierta en una pestaña.</div>
+          <div class="hint">Te aviso la noche anterior (19:00) y la mañana de cada examen/tarea, 10 min antes de cada sesión y a la hora de leer. Funciona mientras la app esté abierta en una pestaña.</div>
           <div class="row"><div class="hint" id="notifState">${notifState}</div><button class="btn" id="sNotif" style="flex:0">${st.notifications ? 'Desactivar' : 'Activar notificaciones'}</button></div>
-        </section>
-        <section>
-          <h4>🎨 Apariencia</h4>
-          <label class="field"><span>Tema</span><select id="sTheme"><option value="auto">Automático (como el sistema)</option><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
         </section>
         <section>
           <h4>💾 Tus datos</h4>
           <div class="hint">Todo se guarda en este navegador. Haz una copia de vez en cuando.</div>
-          <div class="row-btns" style="display:flex;gap:6px;flex-wrap:wrap">
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
             <button class="btn sm" id="sExport">⬇️ Exportar copia</button>
             <label class="btn sm">⬆️ Importar copia<input type="file" id="sImport" accept="application/json" hidden></label>
             <button class="btn sm danger" id="sReset">Borrar todo</button>
           </div>
         </section>
       </div>
-      <div class="modal-foot"><span class="spacer"></span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="sSave">Guardar</button></div>`, { wide: true });
+      <div class="modal-foot"><span class="spacer"></span><button class="btn" data-close>Cancelar</button><button class="btn primary" id="sSave">Guardar</button></div>`,
+    { wide: true, onClose: () => { if (!saved) applyTheme(); } });
     const r = m.root;
     $('#sTheme', r).value = st.theme;
+    $('#sScale', r).value = String(st.gradeScale || 20);
+    $$('[data-acc]', r).forEach((b) => (b.onclick = () => {
+      accent = b.dataset.acc;
+      document.documentElement.dataset.accent = accent; // vista previa en vivo
+      $$('[data-acc]', r).forEach((x) => x.classList.toggle('sel', x === b));
+    }));
+    $('#sTour', r).onclick = () => { m.close(); App.tour.start(); };
 
     const DL = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
     const renderRoutines = () => {
@@ -1115,7 +1389,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
           <input type="text" value="${esc((rt.icon ? rt.icon + ' ' : '') + rt.title)}">
           <div class="daypick">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<button type="button" data-d="${d}" class="${rt.days.includes(d) ? 'sel' : ''}">${DL[d]}</button>`).join('')}</div>
           <input type="time" value="${rt.start}"><input type="time" value="${rt.end}">
-          <button class="icon-btn sm" title="Quitar">✕</button></div>`);
+          <button class="icon-btn sm" title="Quitar">${icon('x', 14)}</button></div>`);
         const [tIn, sIn, eIn] = $$('input', row);
         tIn.onchange = () => {
           const mm = tIn.value.trim().match(/^(\p{Extended_Pictographic}️?)\s*(.*)$/u);
@@ -1178,7 +1452,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
         const key = state.settings.geminiKey;
         const base = A.freshState();
         state = { ...base, ...data, settings: { ...base.settings, ...(data.settings || {}), geminiKey: key || (data.settings || {}).geminiKey || '' } };
-        m.close(); commit(); renderChat(); applyTheme();
+        saved = true; m.close(); commit(); renderChat();
         toast('✅ Copia importada');
       } catch (err) { toast('❌ No se pudo importar: ' + err.message); }
     };
@@ -1187,7 +1461,8 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       const key = state.settings.geminiKey;
       state = A.freshState();
       state.settings.geminiKey = key;
-      m.close(); commit(); renderChat(); applyTheme();
+      state.settings.tourDone = true;
+      saved = true; m.close(); commit(); renderChat();
     };
     $('#sSave', r).onclick = () => {
       st.geminiKey = $('#sKey', r).value.trim();
@@ -1199,17 +1474,22 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       st.schoolEnd = $('#sSchoolEnd', r).value;
       st.noSchoolDates = noSchool;
       st.theme = $('#sTheme', r).value;
+      st.accent = accent;
+      st.gradeScale = +$('#sScale', r).value;
+      st.nightMode = $('#sNight', r).checked;
+      st.expandSchool = $('#sExpand', r).checked;
       state.routines = routines.filter((x) => x.title && x.start && x.end && x.start < x.end && x.days.length);
       const sleep = state.goals.find((g) => g.id === 'sleep');
       if (sleep && /antes de las \d/.test(sleep.title)) sleep.title = `Dormir antes de las ${st.bedtime}`;
-      applyTheme();
+      saved = true;
       m.close();
       state.summary = null;
+      ui.weekScroll = null;
       commit();
       refreshSummary(true);
       toast('Ajustes guardados');
     };
-    if (focus === 'ai') setTimeout(() => $('#sKey', r).focus(), 50);
+    if (focus === 'ai') setTimeout(() => { $('#secAI', r).scrollIntoView({ block: 'start' }); $('#sKey', r).focus(); }, 60);
   }
 
   // =========================================================
@@ -1238,44 +1518,45 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
         once(e.id + ':soon', () => notify(`En 10 min: ${e.title}`, `${e.start}–${e.end || ''}`));
       }
     });
-    const bed = DU.toMin(state.settings.bedtime);
-    if (nm >= bed - 30 && nm < bed) once('bed', () => notify('📖 Hora de leer 10 min', `y luego a dormir antes de las ${state.settings.bedtime} 🌙`));
-    // limpiar avisos viejos
     Object.keys(sent).forEach((k) => { if (k.slice(0, 10) < DU.addDays(today, -3)) delete sent[k]; });
   }
 
   // =========================================================
   //  Arranque
   // =========================================================
+  function step(dir) {
+    if (ui.view === 'week') ui.cursor = DU.addDays(ui.cursor, 7 * dir);
+    else if (ui.view === 'month') { const d = DU.parse(ui.cursor); ui.cursor = DU.fmt(new Date(d.getFullYear(), d.getMonth() + dir, 1)); }
+    else return;
+    ui.miniCursor = ui.cursor;
+    renderAll();
+  }
+  function setView(v) { ui.view = v; ui.weekScroll = null; renderAll(); }
+
   function bind() {
-    $$('.tab').forEach((t) => (t.onclick = () => { ui.view = t.dataset.view; ui.weekScroll = null; renderAll(); }));
-    $$('[data-goto]').forEach((b) => (b.onclick = () => { ui.view = b.dataset.goto; renderAll(); }));
-    const step = (dir) => {
-      if (ui.view === 'week') ui.cursor = DU.addDays(ui.cursor, 7 * dir);
-      else if (ui.view === 'month') { const d = DU.parse(ui.cursor); ui.cursor = DU.fmt(new Date(d.getFullYear(), d.getMonth() + dir, 1)); }
-      renderAll();
-    };
+    $('#prevBtn').innerHTML = icon('left'); $('#nextBtn').innerHTML = icon('right');
+    $('#addBtn').innerHTML = `${icon('plus', 16)}<span>Nuevo</span>`;
+    $('#settingsBtn').innerHTML = icon('settings'); $('#helpBtn').innerHTML = icon('help');
+    $('#closeChat').innerHTML = icon('x', 16); $('#clearChat').innerHTML = icon('trash', 15);
+    $('#chatSend').innerHTML = icon('send', 16); $('#chatMic').innerHTML = icon('mic', 16); $('#quickMic').innerHTML = icon('mic', 18);
+    $('#quickIcon').innerHTML = icon('sparkles', 18);
+
+    $$('.tab').forEach((t) => (t.onclick = () => setView(t.dataset.view)));
+    $$('[data-goto]').forEach((b) => (b.onclick = () => setView(b.dataset.goto)));
     $('#prevBtn').onclick = () => step(-1);
     $('#nextBtn').onclick = () => step(1);
-    $('#todayBtn').onclick = () => { ui.cursor = DU.today(); ui.weekScroll = null; renderAll(); };
+    $('#todayBtn').onclick = () => { ui.cursor = DU.today(); ui.miniCursor = ui.cursor; ui.weekScroll = null; renderAll(); };
     $('#addBtn').onclick = () => openEventModal({});
     $('#settingsBtn').onclick = () => openSettings();
-    $('#themeBtn').onclick = () => { state.settings.theme = isDark() ? 'light' : 'dark'; applyTheme(); persist(); };
-    $('#refreshSummary').onclick = () => refreshSummary(true);
-    $('#showDone').onchange = (e) => { ui.showDone = e.target.checked; renderSidebar(); };
-    const app = $('#app');
-    let chatHidden = false;
-    try { chatHidden = localStorage.getItem('agenda-chat-hidden') === '1'; } catch (_) { /* nada */ }
-    app.classList.toggle('chat-hidden', chatHidden);
-    $('#chatToggle').onclick = () => {
-      if (window.innerWidth <= 960) { app.classList.remove('chat-hidden'); app.classList.toggle('chat-open'); }
-      else {
-        app.classList.toggle('chat-hidden');
-        try { localStorage.setItem('agenda-chat-hidden', app.classList.contains('chat-hidden') ? '1' : '0'); } catch (_) { /* nada */ }
-      }
-      if (!app.classList.contains('chat-hidden')) setTimeout(() => $('#chatInput').focus(), 50);
+    $('#helpBtn').onclick = () => App.tour.start();
+    $('#themeBtn').onclick = () => {
+      if (ui.night) { toast('🌙 Es de noche: el modo noche está activo (puedes desactivarlo en Ajustes)'); return; }
+      state.settings.theme = isDark() ? 'light' : 'dark'; applyTheme(); persist();
     };
-    $('#closeChat').onclick = () => app.classList.remove('chat-open');
+    $('#showDone').onchange = (e) => { ui.showDone = e.target.checked; renderSidebar(); };
+    $('#lunaFab').onclick = () => (ui.chatOpen ? closeChat() : openChat());
+    $('#closeChat').onclick = closeChat;
+    $('#lunaMood').onclick = () => { if (!state.settings.geminiKey) openSettings('ai'); };
     $('#clearChat').onclick = async () => {
       if (state.chat.length && await confirmBox('¿Borrar la conversación con Luna? (tus eventos no se borran)', 'Borrar')) { state.chat = []; persist(); renderChat(); }
     };
@@ -1283,36 +1564,59 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
     $('#chatInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('#chatForm').requestSubmit(); }
     });
+    setupMic($('#chatMic'), $('#chatInput'), null, () => $('#chatForm').requestSubmit());
+    setupQuickbar();
     document.addEventListener('keydown', (e) => {
-      if ($('#modalRoot').children.length || /input|textarea|select/i.test(e.target.tagName)) return;
+      if ($('#modalRoot').children.length || $('.focus-ov') || $('.tour') || /input|textarea|select/i.test(e.target.tagName)) return;
       if (e.key === 'n') { e.preventDefault(); openEventModal({}); }
       else if (e.key === 'ArrowLeft') step(-1);
       else if (e.key === 'ArrowRight') step(1);
       else if (e.key === 't') $('#todayBtn').click();
-      else if (e.key === '/') { e.preventDefault(); $('#chatInput').focus(); }
+      else if (e.key === '/') { e.preventDefault(); $('#quickInput').focus(); }
+      else if (e.key === 'l') { e.preventDefault(); openChat(); }
+      else if (e.key === 'Escape' && ui.chatOpen) closeChat();
     });
     window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { if (state.settings.theme === 'auto') applyTheme(); });
     window.addEventListener('storage', (e) => { if (e.key === 'agenda-raimondi-v1') { state = A.load(); renderAll(); renderChat(); } });
   }
 
   let lastDay = DU.today();
+  let lastNight = null;
   function tick() {
     checkReminders();
-    if (DU.today() !== lastDay) { lastDay = DU.today(); ui.cursor = lastDay; renderAll(); refreshSummary(); }
-    else if (ui.view === 'week') {
-      const line = $('.now-line');
-      if (line) { const ppm = getPPM(); line.style.top = `${(DU.nowMin() - state.settings.calStart * 60) * ppm}px`; }
+    const night = isNightTime();
+    if (DU.today() !== lastDay) { lastDay = DU.today(); ui.cursor = lastDay; ui.miniCursor = lastDay; renderAll(); refreshSummary(); }
+    else if (lastNight !== null && night !== lastNight) renderAll();
+    else {
+      if (ui.view === 'today' && !$('#modalRoot').children.length) renderView();
+      else if (ui.view === 'week') {
+        const line = $('.now-line');
+        if (line) line.style.top = `${makeScale().y(DU.nowMin())}px`;
+      }
+      renderLuna();
     }
+    lastNight = night;
+    App.rituals && App.rituals.tick();
   }
 
-  applyTheme();
-  bind();
-  renderAll();
-  renderChat();
-  refreshSummary();
-  tick();
-  setInterval(tick, 30000);
-
-  // para pruebas desde la consola
-  window.__agenda = { get state() { return state; }, renderAll, openEventModal, openPlanModal };
+  // ---------- API compartida con los demás módulos ----------
+  const App = window.App = {
+    ui, $, $$, esc, el, icon, persist, commit, toast, openModal, confirmBox, TYPE, IMP, DIF, stars, dur,
+    getEv, childrenOf, addEvent, markDone, addFocus, deleteEvent, bossOf, activeBosses, subjectFactor, pendingResults,
+    resultHTML, bindResult, saveResult,
+    isDoneGoal, setGoal, toggleGoal, streakOf, weekCount, subjOf, shortTitle, badge, lunaMood, summaryText, refreshSummary,
+    renderAll, renderView, openEventModal, openPlanModal, openSettings, openChat, sendChat, setView, applyTheme,
+    views: {},
+    start() {
+      bind();
+      renderAll();
+      renderChat();
+      refreshSummary();
+      tick();
+      setInterval(tick, 30000);
+      App.rituals && App.rituals.startup();
+    },
+  };
+  Object.defineProperty(App, 'state', { get: () => state });
+  window.__agenda = App;
 })();

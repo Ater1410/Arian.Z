@@ -52,21 +52,21 @@
   const BREAKS = [['10:55', '11:10', 'Pausa'], ['13:25', '14:10', 'Pranzo']];
 
   const SUBJECTS = {
-    storia: { name: 'Storia', teacher: 'R. Valli', color: '#ff6b6b', aliases: ['storia', 'historia'] },
-    comunicacion: { name: 'Comunicación', teacher: 'E. Vizcarra', color: '#2f4fb5', aliases: ['comunicacion', 'comu', 'lenguaje'] },
-    italiano: { name: 'Italiano', teacher: 'S. Annunziata', color: '#16b8f3', aliases: ['italiano'] },
-    filosofia: { name: 'Filosofia', teacher: 'V. Ursino', color: '#d9c66a', aliases: ['filosofia', 'filo'] },
-    sociales: { name: 'Ciencias Sociales', teacher: 'J. Santa Cruz', color: '#3a3ad6', aliases: ['ciencias sociales', 'sociales', 'ccss'] },
-    tutoria: { name: 'Tutoría', teacher: 'F. Schwarz', color: '#14963c', aliases: ['tutoria'] },
-    ingles: { name: 'Inglés', teacher: 'M. Mohatt', color: '#a020a0', aliases: ['ingles', 'english'] },
-    scienze: { name: 'Scienze', teacher: 'J. Lopez', color: '#6a6ad0', aliases: ['scienze', 'ciencias', 'biologia', 'quimica'] },
-    edfisica: { name: 'Ed. Física', teacher: 'J. Mori / N. Nieri', color: '#9093ff', aliases: ['educacion fisica', 'ed fisica', 'ed. fisica'] },
-    latino: { name: 'Latino', teacher: 'S. Annunziata', color: '#2bbdbd', aliases: ['latino', 'latin'] },
-    matematica: { name: 'Matemática', teacher: 'TG', color: '#e0c400', aliases: ['matematicas', 'matematica', 'mate', 'algebra', 'geometria', 'trigonometria'] },
-    fisica: { name: 'Física', teacher: 'F. Schwarz', color: '#1fbf1f', aliases: ['fisica'] },
-    arte: { name: "Diseg. e Storia dell'arte", teacher: 'C. Napoli', color: '#f5b028', aliases: ['historia del arte', 'disegno', 'dibujo', 'arte'] },
-    religion: { name: 'Religión', teacher: 'J. Cabeza', color: '#f58f8f', aliases: ['religion'] },
-    informatica: { name: 'Informática', teacher: 'A. Córdova', color: '#159a4a', aliases: ['informatica', 'computacion'] },
+    storia: { icon: '🏛️', short: 'Storia', name: 'Storia', teacher: 'R. Valli', color: '#ff6b6b', aliases: ['storia', 'historia'] },
+    comunicacion: { icon: '✍️', short: 'Comu', name: 'Comunicación', teacher: 'E. Vizcarra', color: '#2f4fb5', aliases: ['comunicacion', 'comu', 'lenguaje'] },
+    italiano: { icon: '🇮🇹', short: 'Italiano', name: 'Italiano', teacher: 'S. Annunziata', color: '#16b8f3', aliases: ['italiano'] },
+    filosofia: { icon: '🦉', short: 'Filo', name: 'Filosofia', teacher: 'V. Ursino', color: '#d9c66a', aliases: ['filosofia', 'filo'] },
+    sociales: { icon: '🌎', short: 'Sociales', name: 'Ciencias Sociales', teacher: 'J. Santa Cruz', color: '#3a3ad6', aliases: ['ciencias sociales', 'sociales', 'ccss'] },
+    tutoria: { icon: '🤝', short: 'Tutoría', name: 'Tutoría', teacher: 'F. Schwarz', color: '#14963c', aliases: ['tutoria'] },
+    ingles: { icon: '🇬🇧', short: 'Inglés', name: 'Inglés', teacher: 'M. Mohatt', color: '#a020a0', aliases: ['ingles', 'english'] },
+    scienze: { icon: '🧬', short: 'Scienze', name: 'Scienze', teacher: 'J. Lopez', color: '#6a6ad0', aliases: ['scienze', 'ciencias', 'biologia', 'quimica'] },
+    edfisica: { icon: '🏃', short: 'Ed. Fís.', name: 'Ed. Física', teacher: 'J. Mori / N. Nieri', color: '#9093ff', aliases: ['educacion fisica', 'ed fisica', 'ed. fisica'] },
+    latino: { icon: '📜', short: 'Latino', name: 'Latino', teacher: 'S. Annunziata', color: '#2bbdbd', aliases: ['latino', 'latin'] },
+    matematica: { icon: '∫', short: 'Mate', name: 'Matemática', teacher: 'TG', color: '#e0c400', aliases: ['matematicas', 'matematica', 'mate', 'algebra', 'geometria', 'trigonometria'] },
+    fisica: { icon: '⚛️', short: 'Física', name: 'Física', teacher: 'F. Schwarz', color: '#1fbf1f', aliases: ['fisica'] },
+    arte: { icon: '🎨', short: 'Arte', name: "Diseg. e Storia dell'arte", teacher: 'C. Napoli', color: '#f5b028', aliases: ['historia del arte', 'disegno', 'dibujo', 'arte'] },
+    religion: { icon: '✝️', short: 'Religión', name: 'Religión', teacher: 'J. Cabeza', color: '#f58f8f', aliases: ['religion'] },
+    informatica: { icon: '💻', short: 'Info', name: 'Informática', teacher: 'A. Córdova', color: '#159a4a', aliases: ['informatica', 'computacion'] },
   };
 
   // [periodo inicial, periodo final, materia] por día (1 = lunes)
@@ -99,11 +99,11 @@
   // ---------- Valores por defecto ----------
   const DEFAULT_ROUTINES = [
     { id: 'r1', title: 'Fútbol', icon: '⚽', days: [1, 3, 5], start: '15:40', end: '17:10' },
-    { id: 'r2', title: 'Camino a casa', icon: '🚗', days: [1, 3, 5], start: '17:10', end: '17:50' },
-    { id: 'r3', title: 'Almuerzo y baño', icon: '🍽️', days: [1, 3, 5], start: '17:50', end: '18:50' },
+    { id: 'r2', title: 'Camino', icon: '🚗', days: [1, 3, 5], start: '17:10', end: '17:50' },
+    { id: 'r3', title: 'Almuerzo', icon: '🍽️', days: [1, 3, 5], start: '17:50', end: '18:50' },
     { id: 'r4', title: 'Gimnasio', icon: '🏋️', days: [2, 4], start: '15:40', end: '18:00' },
-    { id: 'r5', title: 'Camino a casa', icon: '🚗', days: [2, 4], start: '18:00', end: '18:30' },
-    { id: 'r6', title: 'Almuerzo y baño', icon: '🍽️', days: [2, 4], start: '18:30', end: '19:30' },
+    { id: 'r5', title: 'Camino', icon: '🚗', days: [2, 4], start: '18:00', end: '18:30' },
+    { id: 'r6', title: 'Almuerzo', icon: '🍽️', days: [2, 4], start: '18:30', end: '19:30' },
   ];
 
   const DEFAULT_GOALS = [
@@ -127,6 +127,14 @@
     noSchoolDates: [],
     schoolEnd: '',
     notifications: false,
+    accent: 'violeta',        // violeta | raimondi | oceano | atardecer | rosa
+    expandSchool: false,      // colegio comprimido en la vista semanal
+    nightMode: true,          // modo noche automático + ritual de lectura
+    gradeScale: 20,
+    tourDone: false,
+    sleepAsked: '',
+    nightShown: '',
+    weeklyDone: '',
   };
 
   // ---------- Almacenamiento ----------

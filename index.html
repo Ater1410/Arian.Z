@@ -4,42 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Mi Agenda · III SCB</title>
-  <meta name="description" content="Agenda escolar con asistente de IA, plan de estudio y metas diarias.">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>">
+  <meta name="description" content="Agenda escolar con asistente de IA, plan de estudio, jefes y metas diarias.">
+  <meta name="theme-color" content="#5b5bf0">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌙</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
   <div id="app" class="app">
     <!-- Barra superior -->
     <header class="topbar">
-      <div class="brand"><span class="logo">📅</span><div><b>Mi Agenda</b><small>III SCB · Raimondi</small></div></div>
+      <div class="tricolor" aria-hidden="true"></div>
+      <div class="brand"><span class="logo">🌙</span><div><b>Mi Agenda</b><small>III SCB · Raimondi</small></div></div>
       <nav class="tabs" role="tablist">
-        <button data-view="week" class="tab active">Semana</button>
+        <button data-view="today" class="tab">Hoy</button>
+        <button data-view="week" class="tab">Semana</button>
         <button data-view="month" class="tab">Mes</button>
         <button data-view="goals" class="tab">Metas</button>
       </nav>
       <div class="datenav">
-        <button id="prevBtn" class="icon-btn" title="Anterior">‹</button>
-        <button id="todayBtn" class="btn ghost">Hoy</button>
-        <button id="nextBtn" class="icon-btn" title="Siguiente">›</button>
+        <button id="prevBtn" class="icon-btn" title="Anterior (←)"></button>
+        <button id="todayBtn" class="btn ghost sm">Hoy</button>
+        <button id="nextBtn" class="icon-btn" title="Siguiente (→)"></button>
         <span id="rangeLabel" class="range-label"></span>
       </div>
       <div class="top-actions">
-        <button id="addBtn" class="btn primary">＋ Nuevo</button>
-        <button id="themeBtn" class="icon-btn" title="Modo claro/oscuro">🌓</button>
-        <button id="settingsBtn" class="icon-btn" title="Ajustes">⚙️</button>
-        <button id="chatToggle" class="icon-btn" title="Asistente">✨</button>
+        <button id="addBtn" class="btn primary" title="Nuevo (N)"></button>
+        <button id="themeBtn" class="icon-btn" title="Modo claro/oscuro"></button>
+        <button id="helpBtn" class="icon-btn" title="Recorrido"></button>
+        <button id="settingsBtn" class="icon-btn" title="Ajustes"></button>
       </div>
     </header>
 
-    <!-- Lateral izquierdo -->
+    <!-- Lateral -->
     <aside class="sidebar">
-      <section class="card summary-card">
-        <div class="card-head"><h3 id="todayTitle">Hoy</h3><button id="refreshSummary" class="icon-btn sm" title="Actualizar resumen">↻</button></div>
-        <p id="summaryText" class="summary-text"></p>
-      </section>
+      <section class="card mini-card"><div id="miniMonth" class="mini-month"></div></section>
       <section class="card">
-        <div class="card-head"><h3>Metas de hoy</h3><button class="link" data-goto="goals">ver todo</button></div>
+        <div class="card-head"><h3>Metas de hoy</h3><button class="link" data-goto="goals">ver cielo ✨</button></div>
         <div id="todayGoals" class="today-goals"></div>
       </section>
       <section class="card">
@@ -48,22 +51,36 @@
       </section>
     </aside>
 
-    <!-- Vista principal -->
-    <main class="main" id="main"></main>
+    <!-- Vista principal + barra rápida -->
+    <main class="main">
+      <div id="view" class="view"></div>
+      <div class="quickbar">
+        <div class="qb-row">
+          <span id="quickIcon" class="qb-icon"></span>
+          <input id="quickInput" type="text" autocomplete="off" placeholder="Escribe o dicta: examen de física el miércoles…" aria-label="Agregar rápido">
+          <button id="quickMic" class="icon-btn mic" title="Dictar por voz"></button>
+        </div>
+        <div id="quickPreview" class="quick-preview"></div>
+      </div>
+    </main>
 
-    <!-- Asistente IA -->
+    <!-- Luna: burbuja flotante -->
+    <button id="lunaFab" class="luna-fab" aria-label="Hablar con Luna"><span class="luna-face">🌙</span><i class="dot"></i></button>
     <aside class="chat" id="chat">
       <div class="chat-head">
-        <div class="avatar">🌙</div>
-        <div><b>Luna</b><small id="aiStatus">asistente</small></div>
-        <button id="clearChat" class="icon-btn sm" title="Borrar conversación">🗑️</button>
-        <button id="closeChat" class="icon-btn sm only-mobile" title="Cerrar">✕</button>
+        <div class="avatar"><span class="luna-face">🌙</span></div>
+        <div class="who"><b>Luna</b><small id="lunaMood">asistente</small></div>
+        <button id="clearChat" class="icon-btn sm" title="Borrar conversación"></button>
+        <button id="closeChat" class="icon-btn sm" title="Cerrar"></button>
       </div>
       <div id="chatLog" class="chat-log"></div>
       <div id="chatSuggest" class="chat-suggest"></div>
       <form id="chatForm" class="chat-form">
-        <textarea id="chatInput" rows="2" placeholder="Ej: Tengo examen de mate el jueves, entra hasta derivadas"></textarea>
-        <button class="btn primary" type="submit">➤</button>
+        <textarea id="chatInput" rows="2" placeholder="Ej: Tengo examen de mate el jueves, entra derivadas"></textarea>
+        <div class="chat-btns">
+          <button id="chatMic" class="icon-btn mic" type="button" title="Dictar"></button>
+          <button id="chatSend" class="btn primary icon-only" type="submit" title="Enviar"></button>
+        </div>
       </form>
     </aside>
   </div>
@@ -74,6 +91,14 @@
   <script src="js/data.js"></script>
   <script src="js/planner.js"></script>
   <script src="js/ai.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/fx.js"></script>
   <script src="js/app.js"></script>
+  <script src="js/today.js"></script>
+  <script src="js/goals.js"></script>
+  <script src="js/focus.js"></script>
+  <script src="js/rituals.js"></script>
+  <script src="js/tour.js"></script>
+  <script src="js/main.js"></script>
 </body>
 </html>

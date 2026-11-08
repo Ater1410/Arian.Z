@@ -288,5 +288,17 @@ Reglas:
     return (e.importance || 3) * 2 + (e.difficulty || 3) - days * 1.2;
   }
 
-  window.AI = { ask, dailySummaryAI, localSummary, testConnection, buildContext, urgency, TYPES, ASSISTANT_NAME };
+  // Vista previa para la barra rápida: solo si se entiende como algo para crear
+  function quickParse(state, text) {
+    if (!text || text.trim().length < 4) return null;
+    const r = localParse(state, text);
+    const a = r.actions && r.actions[0];
+    return a && a.type === 'create_event' ? a : null;
+  }
+
+  async function freeText(state, prompt) {
+    return callGemini(state, [{ role: 'user', parts: [{ text: `${buildContext(state)}\n\n${prompt}` }] }], { json: false, system: `Eres ${ASSISTANT_NAME}, asistente de agenda de un estudiante. Respondes en español, breve, cálido y motivador, sin markdown.` });
+  }
+
+  window.AI = { quickParse, freeText, ask, dailySummaryAI, localSummary, testConnection, buildContext, urgency, TYPES, ASSISTANT_NAME };
 })();

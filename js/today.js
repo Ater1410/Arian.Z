@@ -12,9 +12,9 @@
 
   function greeting() {
     const h = new Date().getHours();
-    if (h < 12) return 'Buenos días ☀️';
-    if (h < 19) return 'Buenas tardes 🌤️';
-    return 'Buenas noches 🌙';
+    if (h < 12) return 'Buenos días';
+    if (h < 19) return 'Buenas tardes';
+    return 'Buenas noches';
   }
 
   /** Pronóstico del día según la carga */
@@ -56,12 +56,13 @@
   }
 
   function labelOf(it) {
-    if (it.kind === 'school') return '🏫 Colegio';
-    if (it.kind === 'routine') return `${it.r.icon || '•'} ${it.r.title}`;
-    if (it.kind === 'event') return `${App.TYPE[it.ev.type].icon} ${App.shortTitle(it.ev)}`;
-    if (it.kind === 'free') return '✨ Tiempo libre';
-    if (it.kind === 'read') return '📖 Leer 10 min';
-    return '🌙 A dormir';
+    const em = App.em;
+    if (it.kind === 'school') return `${em('🏫')}Colegio`;
+    if (it.kind === 'routine') return `${em(it.r.icon)}${it.r.title}`;
+    if (it.kind === 'event') return `${em(App.TYPE[it.ev.type].icon)}${App.shortTitle(it.ev)}`;
+    if (it.kind === 'free') return 'Tiempo libre';
+    if (it.kind === 'read') return 'Leer 10 min';
+    return 'A dormir';
   }
 
   function countdown(min) {
@@ -95,22 +96,22 @@
           <div class="forecast"><span class="fc-icon">${fc.icon}</span><div><b>${fc.label}</b><small>${esc(fc.text)}</small></div></div>
         </div>
         <div class="luna-says">
-          <div class="luna-avatar"><span class="luna-face">${mood.face}</span></div>
-          <div class="bubble"><p id="lunaSays">${esc(App.summaryText())}</p>
-            <button class="icon-btn sm" id="refreshSummary" title="Actualizar">${icon('refresh', 14)}</button></div>
+          <span class="luna-face">${mood.face}</span>
+          <p id="lunaSays">${esc(App.summaryText())}</p>
+          <button class="icon-btn sm" id="refreshSummary" title="Actualizar">${icon('refresh', 14)}</button>
         </div>
       </section>
 
       <section class="nownext">
         <div class="nn-card now">
           <small>AHORA</small>
-          <b>${now ? esc(nowClass ? `${nowClass.icon} ${nowClass.name}` : labelOf(now)) : '😌 Nada en particular'}</b>
+          <b>${now ? esc(nowClass ? `${App.em(nowClass.icon)}${nowClass.name}` : labelOf(now)) : 'Nada en particular'}</b>
           <span>${now ? `${DU.toTime(nowClass ? DU.toMin(nowClass.start) : now.s)}–${DU.toTime(nowClass ? DU.toMin(nowClass.end) : now.e)} · termina ${countdown((nowClass ? DU.toMin(nowClass.end) : now.e) - nm)}` : 'Buen momento para un respiro'}</span>
           ${now ? `<div class="nn-prog"><i style="width:${Math.round((nm - (nowClass ? DU.toMin(nowClass.start) : now.s)) / Math.max(1, (nowClass ? DU.toMin(nowClass.end) - DU.toMin(nowClass.start) : now.e - now.s)) * 100)}%"></i></div>` : ''}
         </div>
         <div class="nn-card next">
           <small>LO SIGUIENTE</small>
-          <b>${next ? esc(labelOf(next)) : '🌙 Fin del día'}</b>
+          <b>${next ? esc(labelOf(next)) : 'Fin del día'}</b>
           <span>${next ? `${DU.toTime(next.s)} · <strong>${countdown(next.s - nm)}</strong>` : '¡Bien hecho hoy!'}</span>
           ${next && next.kind === 'event' && next.ev.type === 'estudio' ? `<button class="btn primary sm" id="startNext">${icon('play', 13)} Empezar</button>` : ''}
         </div>
@@ -122,9 +123,9 @@
           <div class="timeline" id="timeline"></div>
         </section>
         <div class="today-side">
-          <section class="card" id="resultsCard" hidden><div class="card-head"><h3>🎯 ¿Cómo te fue?</h3></div><div id="results"></div></section>
+          <section class="card" id="resultsCard" hidden><div class="card-head"><h3>¿Cómo te fue?</h3></div><div id="results"></div></section>
           <section class="card bosses-card" id="bossSection">
-            <div class="card-head"><h3>⚔️ Jefes a la vista</h3><button class="link" id="weeklyBtn">${icon('chart', 13)} Repaso semanal</button></div>
+            <div class="card-head"><h3>${App.G() ? '⚔️ Jefes a la vista' : 'Exámenes próximos'}</h3><button class="link" id="weeklyBtn">${icon('chart', 13)} Repaso semanal</button></div>
             <div id="bosses"></div>
           </section>
         </div>
@@ -153,9 +154,9 @@
       if (it.kind === 'school') {
         node = el(`<div class="tl-item school ${past ? 'past' : ''}">
           <div class="tl-time">${DU.toTime(it.s)}<small>${DU.toTime(it.e)}</small></div><div class="tl-dot"></div>
-          <div class="tl-body"><div class="tl-title">🏫 Colegio <button class="link" data-toggle>${schoolOpen ? 'ocultar' : `ver ${it.classes.length} clases`}</button></div>
-            <div class="bands-row">${it.classes.map((c) => `<span style="--c:${c.color};flex:${DU.toMin(c.end) - DU.toMin(c.start)}" title="${esc(c.name)} ${c.start}–${c.end}">${c.icon}</span>`).join('')}</div>
-            ${schoolOpen ? `<div class="class-list">${it.classes.map((c) => `<div class="cl ${DU.toMin(c.end) <= nm ? 'past' : ''} ${DU.toMin(c.start) <= nm && nm < DU.toMin(c.end) ? 'cur' : ''}" style="--c:${c.color}"><span>${c.start}</span><b>${c.icon} ${esc(c.name)}</b><small>${esc(c.teacher)}</small></div>`).join('')}</div>` : ''}
+          <div class="tl-body"><div class="tl-title">${App.em('🏫')}Colegio <button class="link" data-toggle>${schoolOpen ? 'ocultar' : `ver ${it.classes.length} clases`}</button></div>
+            <div class="bands-row">${it.classes.map((c) => `<span style="--c:${c.color};flex:${DU.toMin(c.end) - DU.toMin(c.start)}" title="${esc(c.name)} ${c.start}–${c.end}">${App.G() ? c.icon : ''}</span>`).join('')}</div>
+            ${schoolOpen ? `<div class="class-list">${it.classes.map((c) => `<div class="cl ${DU.toMin(c.end) <= nm ? 'past' : ''} ${DU.toMin(c.start) <= nm && nm < DU.toMin(c.end) ? 'cur' : ''}" style="--c:${c.color}"><span>${c.start}</span><b>${App.G() ? c.icon + ' ' : ''}${esc(c.name)}</b><small>${esc(c.teacher)}</small></div>`).join('')}</div>` : ''}
           </div></div>`);
         $('[data-toggle]', node).onclick = () => { schoolOpen = !schoolOpen; App.renderView(); };
       } else if (it.kind === 'routine') {
@@ -166,7 +167,7 @@
         const s = App.subjOf(ev);
         node = el(`<div class="tl-item event t-${ev.type} ${past ? 'past' : ''} ${ev.done ? 'done' : ''}" style="${s ? `--sc:${s.color}` : ''}">
           <div class="tl-time">${ev.start}<small>${ev.end || ''}</small></div><div class="tl-dot"></div>
-          <div class="tl-body"><div class="tl-title">${App.badge(ev)} ${esc(ev.title)}</div>
+          <div class="tl-body"><div class="tl-title">${App.badge(ev)}${esc(ev.title)}</div>
             ${ev.notes ? `<small>${esc(ev.notes)}</small>` : ''}</div>
           <div class="tl-actions">
             ${ev.type === 'estudio' && !ev.done ? `<button class="icon-btn sm" data-focus title="Modo concentración">${icon('play', 14)}</button>` : ''}
@@ -179,17 +180,17 @@
       } else if (it.kind === 'free') {
         const a = Math.max(it.s, Math.ceil(nm / 5) * 5);
         node = el(`<div class="tl-item free"><div class="tl-time">${DU.toTime(a)}</div><div class="tl-dot"></div>
-          <div class="tl-body"><div class="tl-title">✨ Libre · ${DU.fmtDur(it.e - a)}</div><small>Toca para usar este tiempo</small></div></div>`);
+          <div class="tl-body"><div class="tl-title">Libre · ${DU.fmtDur(it.e - a)}</div><small>Toca para usar este tiempo</small></div></div>`);
         node.onclick = () => App.openEventModal({ date: today, type: 'evento', start: DU.toTime(a), end: DU.toTime(Math.min(it.e, a + 60)) });
       } else if (it.kind === 'read') {
         const g = state.goals.find((x) => x.id === 'read');
         const done = g && App.isDoneGoal(g, today);
         node = el(`<div class="tl-item ritual ${done ? 'done' : ''}"><div class="tl-time">${DU.toTime(it.s)}</div><div class="tl-dot"></div>
-          <div class="tl-body"><div class="tl-title">📖 Leer 10 minutos ${done ? '✓' : ''}</div><small>${done ? '¡Hecho!' : 'Toca para empezar con temporizador'}</small></div></div>`);
+          <div class="tl-body"><div class="tl-title">Leer 10 minutos ${done ? '✓' : ''}</div><small>${done ? '¡Hecho!' : 'Toca para empezar con temporizador'}</small></div></div>`);
         node.onclick = () => App.rituals.openReading({ force: true });
       } else {
         node = el(`<div class="tl-item bed"><div class="tl-time">${DU.toTime(it.s)}</div><div class="tl-dot"></div>
-          <div class="tl-body"><div class="tl-title">🌙 A dormir</div><small>Meta: dormir antes de las ${state.settings.bedtime}</small></div></div>`);
+          <div class="tl-body"><div class="tl-title">A dormir</div><small>Meta: dormir antes de las ${state.settings.bedtime}</small></div></div>`);
       }
       tl.appendChild(node);
     });
@@ -219,7 +220,33 @@
     // ----- jefes -----
     const bx = $('#bosses', wrap);
     const bosses = App.activeBosses().slice(0, 5);
-    if (!bosses.length) bx.innerHTML = '<div class="empty big">🕊️ No hay jefes a la vista.<br><small>Cuando anotes un examen, aparecerá aquí como un monstruo. Cada sesión de estudio le quita vida.</small></div>';
+    if (!bosses.length) bx.innerHTML = App.G()
+      ? '<div class="empty big">🕊️ No hay jefes a la vista.<br><small>Cuando anotes un examen, aparecerá aquí como un monstruo. Cada sesión de estudio le quita vida.</small></div>'
+      : '<div class="empty big">Sin exámenes próximos.<br><small>Cuando anotes uno verás aquí cuánto te has preparado.</small></div>';
+    if (!App.G()) {
+      bosses.forEach((b) => {
+        const ev = b.ev;
+        const s = App.subjOf(ev);
+        const n = DU.diffDays(today, ev.date);
+        const row = el(`<div class="exam-row" style="--sc:${s ? s.color : 'var(--accent)'}">
+          <div class="er-main">
+            <div class="er-top">${App.badge(ev)}<b>${esc(App.shortTitle(ev))}</b><span class="when ${n <= 1 ? 'hot' : ''}">${DU.relative(ev.date)}</span></div>
+            <small>${DU.prettyShort(ev.date)} · ${ev.start || ''} · ${b.sessions ? `${b.sessionsDone}/${b.sessions} sesiones` : 'sin plan'}</small>
+            <div class="hp prep"><i style="width:${b.prep}%"></i></div>
+            <small class="er-pct">${b.prep}% preparado · faltan ${DU.fmtDur(b.hp)}</small>
+          </div>
+          <div class="er-actions">
+            <button class="btn sm" data-attack>${icon('play', 12)} Estudiar</button>
+            ${b.sessions ? '' : '<button class="btn sm ghost" data-plan>Plan</button>'}
+          </div></div>`);
+        $('[data-attack]', row).onclick = () => App.openFocus(b.nextSession && b.nextSession.date === today ? b.nextSession : ev);
+        const pb = $('[data-plan]', row);
+        if (pb) pb.onclick = () => App.openPlanModal(ev);
+        $('.er-main', row).onclick = () => App.openEventModal({ id: ev.id });
+        bx.appendChild(row);
+      });
+      return wrap;
+    }
     bosses.forEach((b) => {
       const ev = b.ev;
       const s = App.subjOf(ev);

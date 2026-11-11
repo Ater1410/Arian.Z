@@ -40,7 +40,7 @@
     const ov = el(`<div class="focus-ov" style="--sc:${subj ? subj.color : 'var(--accent)'}">
       <button class="icon-btn focus-x" title="Salir">${icon('x', 20)}</button>
       <div class="focus-inner">
-        <div class="focus-subj">${subj ? `<span>${subj.icon}</span> ${esc(subj.name)}` : '🧠 Concentración'}</div>
+        <div class="focus-subj">${subj ? `${App.G() ? `<span>${subj.icon}</span> ` : ''}${esc(subj.name)}` : 'Concentración'}</div>
         <h2>${esc(target.title)}</h2>
         <div class="ring-wrap">
           <svg viewBox="0 0 220 220" class="ring"><circle cx="110" cy="110" r="96" class="track"/><circle cx="110" cy="110" r="96" class="prog" pathLength="100"/></svg>
@@ -69,7 +69,10 @@
       if (parent) {
         const b = App.bossOf(parent);
         const live = Math.max(0, b.hp - Math.floor((total - remaining) / 60));
-        $('#fBoss', ov).innerHTML = `<span class="bf">${b.face}</span><div><small>${esc(b.name)} · ❤️ ${DU.fmtDur(live)}</small><div class="hp"><i style="width:${Math.round(live / b.maxHP * 100)}%"></i></div></div>`;
+        const pctLive = Math.round(live / b.maxHP * 100);
+        $('#fBoss', ov).innerHTML = App.G()
+          ? `<span class="bf">${b.face}</span><div><small>${esc(b.name)} · ❤️ ${DU.fmtDur(live)}</small><div class="hp"><i style="width:${pctLive}%"></i></div></div>`
+          : `<div><small>${esc(parent.title)} · ${100 - pctLive}% preparado</small><div class="hp prep"><i style="width:${100 - pctLive}%"></i></div></div>`;
       }
       if (running && remaining <= 0) finish();
     };
@@ -127,7 +130,7 @@
     $('#fDone', ov).onclick = () => {
       const mins = save();
       close();
-      if (mins) App.toast(parent ? `⚔️ ${mins} min de estudio: le quitaste vida al ${App.bossOf(parent).name}` : `✅ ${mins} min de concentración`);
+      if (mins) App.toast(parent ? (App.G() ? `⚔️ ${mins} min de estudio: le quitaste vida al ${App.bossOf(parent).name}` : `${mins} min de estudio · ${parent.title} al ${App.bossOf(parent).prep}%`) : `${mins} min de concentración`);
     };
     $('.focus-x', ov).onclick = async () => {
       const elapsed = Math.round((total - (running ? (endAt - Date.now()) / 1000 : remaining)) / 60);

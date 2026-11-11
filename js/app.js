@@ -44,6 +44,9 @@
   const IMP = ['', 'Poco importante', 'Algo importante', 'Importante', 'Muy importante', 'Crucial'];
   const DIF = ['', 'Fácil', 'Accesible', 'Media', 'Difícil', 'Muy difícil'];
   const stars = (n) => n ? '★'.repeat(n) + '☆'.repeat(5 - n) : '';
+  const G = () => !!state.settings.gameMode;           // modo juego
+  const em = (x) => (G() && x ? x + ' ' : '');           // emoji solo en modo juego
+  const sdot = (s) => (s ? `<i class="sdot" style="--sc:${s.color}"></i>` : '');
 
   // ---------- toasts y modales ----------
   function toast(msg, actions = [], ms = 4000) {
@@ -96,7 +99,9 @@
     const root = document.documentElement;
     const t = ui.night ? 'dark' : st.theme;
     if (t === 'auto') root.removeAttribute('data-theme'); else root.dataset.theme = t;
-    root.dataset.accent = st.accent || 'violeta';
+    root.dataset.accent = st.accent || 'tinta';
+    root.dataset.game = G() ? 'on' : 'off';
+    FX.fun = G();
     if (ui.night) root.dataset.night = '1'; else root.removeAttribute('data-night');
     const tb = $('#themeBtn');
     if (tb) tb.innerHTML = icon(isDark() ? 'sun' : 'moon');
@@ -143,7 +148,7 @@
     const b = bossOf(parent);
     setTimeout(() => {
       FX.confetti(); FX.chime('win');
-      toast(`🏆 ¡Derrotaste al ${b.name}! Estás listo para ${parent.title}`, [], 7000);
+      toast(G() ? `🏆 ¡Derrotaste al ${b.name}! Estás listo para ${parent.title}` : `Preparación completa para ${parent.title} ✓`, [], 7000);
     }, 150);
   }
 
@@ -178,7 +183,7 @@
     const subj = ev.subject && SUBJECTS[ev.subject];
     return {
       ev, tier, power, maxHP, hp, pct: Math.round(hp / maxHP * 100),
-      name: `${tier.name}${subj ? ' de ' + subj.short : ''}`, face: tier.face,
+      name: G() ? `${tier.name}${subj ? ' de ' + subj.short : ''}` : (subj ? subj.name : ev.title), face: tier.face, prep: 100 - Math.round(hp / maxHP * 100),
       sessions: kids.length, sessionsDone: kids.filter((k) => k.done).length,
       nextSession: kids.filter((k) => !k.done).sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start))[0] || null,
     };
@@ -220,7 +225,7 @@
       const s = streakOf(g);
       FX.chime('ok');
       if (s.current > 0 && s.current % 7 === 0) FX.confetti({ count: 90 });
-      toast(`${g.icon} ¡Bien! ${s.current > 1 ? `Racha de ${s.current} ${g.freq === 'daily' ? 'días' : 'semanas'} 🔥` : 'Meta cumplida'}`);
+      toast(`${g.icon} ${s.current > 1 ? `Racha de ${s.current} ${g.freq === 'daily' ? 'días' : 'semanas'}` : 'Meta cumplida'}`);
     }
   }
   function weekCount(g, ws) { let c = 0; for (let i = 0; i < 7; i++) if (isDoneGoal(g, DU.addDays(ws, i))) c++; return c; }
@@ -263,6 +268,7 @@
   }
   function badge(e) {
     const s = subjOf(e);
+    if (!G()) return s ? sdot(s) : `<i class="sdot t-${e.type}"></i>`;
     return `${TYPE[e.type] ? TYPE[e.type].icon : ''}${s ? `<span class="sicon">${s.icon}</span>` : ''}`;
   }
 
@@ -362,7 +368,7 @@
   }
 
   function classActions(c, d) {
-    toast(`${c.icon} ${c.name} · ${c.teacher} · ${c.start}–${c.end}`, [
+    toast(`${em(c.icon)}${c.name} · ${c.teacher} · ${c.start}–${c.end}`, [
       { label: '＋ Examen', fn: () => openEventModal({ type: 'examen', subject: c.subject, date: d, start: c.start, end: c.end }) },
       { label: '＋ Tarea', fn: () => openEventModal({ type: 'tarea', subject: c.subject, date: d, start: c.start, end: DU.toTime(DU.toMin(c.start) + 30) }) },
     ], 6000);
@@ -386,7 +392,7 @@
       const exams = state.events.filter((e) => e.date === d && e.type === 'examen' && !e.done);
       const hd = el(`<div class="day-head ${d === today ? 'today' : ''} ${d < today ? 'past' : ''}" title="Agregar algo el ${DU.pretty(d)}">
         <div class="dn">${DU.DAYS_SHORT[w]}</div><div class="dd">${DU.parse(d).getDate()}</div>
-        <div class="dtags">${weekdayNoSchool ? '<span class="noschool">🏖️ libre</span>' : ''}${exams.map((e) => `<span class="examdot" title="${esc(e.title)}">${subjOf(e) ? subjOf(e).icon : '📝'}</span>`).join('')}</div>
+        <div class="dtags">${weekdayNoSchool ? `<span class="noschool">${em('🏖️')}sin clases</span>` : ''}${exams.map((e) => `<span class="examdot" title="${esc(e.title)}">${G() ? (subjOf(e) ? subjOf(e).icon : '📝') : `<i class="sdot t-examen"></i>`}</span>`).join('')}</div>
         ${w >= 1 && w <= 5 ? `<button class="school-toggle" title="${school ? 'Marcar día sin clases (feriado)' : 'Marcar día con clases'}">${school ? '🏫' : '🏖️'}</button>` : ''}
       </div>`);
       const tg = $('.school-toggle', hd);
@@ -435,7 +441,7 @@
         classesOn(w).forEach((c) => {
           const a = DU.toMin(c.start), b = DU.toMin(c.end);
           const band = el(`<div class="band" style="top:${y(a) - y(s0)}px;height:${y(b) - y(a) - 1}px;--c:${c.color}" title="${esc(c.name)} · ${esc(c.teacher)} · ${c.start}–${c.end}">
-            <span class="bi">${c.icon}</span><span class="bn">${esc(c.short)}</span>${st.expandSchool ? `<span class="bt2">${esc(c.teacher)}</span>` : ''}</div>`);
+            ${G() ? `<span class="bi">${c.icon}</span>` : ''}<span class="bn">${esc(c.short)}</span>${st.expandSchool ? `<span class="bt2">${esc(c.teacher)}</span>` : ''}</div>`);
           band.onclick = (ev) => { ev.stopPropagation(); classActions(c, d); };
           cap.appendChild(band);
         });
@@ -446,7 +452,7 @@
       P.routinesOn(state, d).forEach((r) => {
         const a = DU.toMin(r.start), b = DU.toMin(r.end);
         col.appendChild(el(`<div class="routine" style="top:${y(a)}px;height:${y(b) - y(a) - 1}px" title="${esc(r.title)} ${r.start}–${r.end}">
-          <span>${r.icon || '•'} ${esc(r.title)}</span></div>`));
+          <span>${em(r.icon)}${esc(r.title)}</span></div>`));
       });
 
       col.appendChild(el(`<div class="bed-line" style="top:${y(sc.bed)}px"><span>🌙</span></div>`));
@@ -463,7 +469,7 @@
           title="${esc(e.title)} · ${e.start}–${e.end || ''}${e.notes ? '\n' + esc(e.notes) : ''}">
           <div class="bt">${badge(e)} ${esc(shortTitle(e))}</div>
           <div class="bm">${e.start}–${e.end || ''}</div>
-          ${boss ? `<div class="mini-hp" title="Vida del jefe ${boss.hp}/${boss.maxHP} min"><i style="width:${boss.pct}%"></i></div>` : ''}
+          ${boss ? `<div class="mini-hp ${G() ? '' : 'prep'}" title="${G() ? `Vida del jefe ${boss.hp}/${boss.maxHP} min` : `Preparación ${boss.prep}%`}"><i style="width:${G() ? boss.pct : boss.prep}%"></i></div>` : ''}
           ${e.type === 'estudio' && !e.done ? `<button class="play" title="Modo concentración">${icon('play', 12)}</button>` : ''}
           <div class="rz" title="Arrastra para cambiar la duración"></div>
         </div>`);
@@ -665,12 +671,13 @@
       const s = subjOf(e);
       const boss = (e.type === 'examen' || e.type === 'tarea') && !e.done && e.estMinutes ? bossOf(e) : null;
       const item = el(`<div class="up-item ${e.done ? 'done' : ''}" style="--sc:${s ? s.color : 'var(--accent)'}">
-        <div class="up-icon">${s ? s.icon : TYPE[e.type].icon}</div>
+        ${G() ? `<div class="up-icon">${s ? s.icon : TYPE[e.type].icon}</div>` : `<i class="sdot big ${s ? '' : 't-' + e.type}" ${s ? `style="--sc:${s.color}"` : ''}></i>`}
         <div style="min-width:0;flex:1">
           <div class="ut">${esc(shortTitle(e))}</div>
           <div class="um">${DU.prettyShort(e.date)} · ${e.start || ''}${e.importance ? ` · <span class="dots" title="Importancia ${e.importance}/5">${stars(e.importance)}</span>` : ''}</div>
-          ${boss ? `<div class="hp-row" title="Vida del jefe: ${boss.hp} de ${boss.maxHP} min"><span>${boss.face}</span><div class="hp"><i style="width:${boss.pct}%"></i></div><small>${boss.pct}%</small></div>` : ''}
-          ${needsPlan ? '<button class="link" data-plan>🧠 Proponer plan</button>' : ''}
+          ${boss ? (G() ? `<div class="hp-row" title="Vida del jefe: ${boss.hp} de ${boss.maxHP} min"><span>${boss.face}</span><div class="hp"><i style="width:${boss.pct}%"></i></div><small>${boss.pct}%</small></div>`
+            : `<div class="hp-row" title="Preparación ${boss.prep}%"><div class="hp prep"><i style="width:${boss.prep}%"></i></div><small>${boss.prep}%</small></div>`) : ''}
+          ${needsPlan ? '<button class="link" data-plan>Proponer plan de estudio</button>' : ''}
         </div>
         <span class="when ${cls}">${n < 0 ? 'atrasada' : DU.relative(e.date)}</span>
       </div>`);
@@ -714,11 +721,11 @@
     }
     const faces = ['', '😌', '🙂', '😐', '😬', '😱'];
     return `<div class="questions">
-      <div class="qh">🤔 Cuéntame un poco más ${v.estimated ? '<small>(Luna lo estimó — ajústalo si no es así)</small>' : ''}</div>
+      <div class="qh">Cuéntame un poco más ${v.estimated ? '<small>(Luna lo estimó — ajústalo si no es así)</small>' : ''}</div>
       <div class="q" data-q="importance"><label>¿Qué tan importante es?<em>${IMP[v.importance] || ''}</em></label>
-        <div class="scale imp">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.importance === n ? 'sel' : ''} ${v.importance >= n ? 'fill' : ''}" title="${IMP[n]}">★</button>`).join('')}</div></div>
+        <div class="scale imp ${G() ? 'game' : ''}">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.importance === n ? 'sel' : ''} ${v.importance >= n ? 'fill' : ''}" title="${IMP[n]}">${G() ? '★' : n}</button>`).join('')}</div></div>
       <div class="q" data-q="difficulty"><label>¿Qué tan difícil es para ti?<em>${DIF[v.difficulty] || ''}</em></label>
-        <div class="scale diff">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.difficulty === n ? 'sel' : ''}" title="${DIF[n]}">${faces[n]}</button>`).join('')}</div></div>
+        <div class="scale diff ${G() ? 'game' : ''}">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-v="${n}" class="${v.difficulty === n ? 'sel' : ''}" title="${DIF[n]}">${G() ? faces[n] : n}</button>`).join('')}</div></div>
       <div class="q" data-q="estMinutes"><label>${tLabel}<em>${v.estMinutes ? DU.fmtDur(v.estMinutes) : ''}</em></label>
         <div class="timechips">${timeOpts.map((n) => `<button type="button" data-v="${n}" class="${v.estMinutes === n ? 'sel' : ''}">${DU.fmtDur(n)}</button>`).join('')}
         <input type="number" min="0.25" step="0.25" placeholder="otro (h)" value="${custom}" title="Horas"></div>${learn}</div>
@@ -791,12 +798,12 @@
     const isPastExam = !!editing && editing.type === 'examen' && (editing.resultDone || pendingResults().includes(editing));
 
     const subjOptions = `<option value="">— Ninguna —</option>` +
-      Object.entries(SUBJECTS).map(([k, s]) => `<option value="${k}">${s.icon} ${esc(s.name)}</option>`).join('');
+      Object.entries(SUBJECTS).map(([k, s]) => `<option value="${k}">${em(s.icon)}${esc(s.name)}</option>`).join('');
 
     const m = openModal(`
       <div class="modal-head"><h2>${editing ? 'Editar' : 'Nuevo'}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
       <div class="modal-body">
-        <div class="type-chips">${Object.entries(TYPE).map(([k, t]) => `<button type="button" data-t="${k}" class="t-${k}">${t.icon} ${t.label}</button>`).join('')}</div>
+        <div class="type-chips">${Object.entries(TYPE).map(([k, t]) => `<button type="button" data-t="${k}" class="t-${k}">${em(t.icon)}${t.label}</button>`).join('')}</div>
         <label class="field"><span>Título</span><input type="text" id="fTitle" placeholder="Ej: Examen de Matemática – derivadas"></label>
         <div class="row">
           <label class="field"><span>Materia</span><select id="fSubject">${subjOptions}</select></label>
@@ -848,8 +855,8 @@
         f.start.value = v.start; f.end.value = v.end;
       }
       if (v.subject && (v.type === 'examen' || v.type === 'tarea')) {
-        if (cls) hint.textContent = `📌 Ese día tienes ${SUBJECTS[v.subject].name} de ${cls.start} a ${cls.end}.`;
-        else { hint.textContent = `⚠️ No tienes ${SUBJECTS[v.subject].name} el ${DU.pretty(v.date)}. Revisa la fecha.`; hint.className = 'hint warn'; }
+        if (cls) hint.textContent = `Ese día tienes ${SUBJECTS[v.subject].name} de ${cls.start} a ${cls.end}.`;
+        else { hint.textContent = `No tienes ${SUBJECTS[v.subject].name} el ${DU.pretty(v.date)}. Revisa la fecha.`; hint.className = 'hint warn'; }
       }
     };
     const syncType = () => {
@@ -912,7 +919,7 @@
       if (plan) openPlanModal(ev);
       else if (!editing) {
         const acts = (ev.type === 'examen' || ev.type === 'tarea') ? [{ label: 'Planificar estudio', fn: () => openPlanModal(ev) }] : [];
-        toast(`${TYPE[ev.type].icon} Guardado: ${ev.title}`, acts, 6000);
+        toast(`Guardado: ${ev.title}`, acts, 6000);
       }
     };
     $('#fSave', r).onclick = () => doSave(false);
@@ -938,7 +945,7 @@
     const boss = isBiz ? null : bossOf(ev);
 
     const m = openModal(`
-      <div class="modal-head"><h2>${isBiz ? '🌱 Tiempo para tu negocio' : `${boss.face} Plan de batalla`}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
+      <div class="modal-head"><h2>${isBiz ? 'Tiempo para tu negocio' : G() ? `${boss.face} Plan de batalla` : 'Plan de estudio'}</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
       <div class="modal-body">
         <div id="planInfo"></div>
         <div class="plan-list" id="planList"></div>
@@ -969,10 +976,10 @@
         info = `<div class="callout">Bloques para <b>${esc(goal.title)}</b> en los próximos 7 días, solo en huecos que no le quitan tiempo al estudio. Total: <b>${DU.fmtDur(total)}</b>.</div>`;
       } else {
         const left = Math.max(0, boss.hp - total);
-        info = `<div class="boss-banner"><span class="bf">${boss.face}</span><div style="flex:1"><b>${esc(boss.name)}</b> · ${esc(ev.title)} · ${DU.pretty(ev.date)}<br>
-          <small>Vida ${DU.fmtDur(boss.maxHP)} · Importancia ${stars(ev.importance)} · Dificultad ${ev.difficulty || '?'}/5</small>
-          <div class="hp big"><i style="width:${Math.round(left / boss.maxHP * 100)}%"></i></div>
-          <small>${left === 0 ? `Con estas ${inc.length} sesiones (${DU.fmtDur(total)}) lo derrotas antes del examen ⚔️` : `Con estas sesiones le quitas ${DU.fmtDur(boss.hp - left)}; le quedarían ${DU.fmtDur(left)} de vida`}.</small></div></div>`;
+        info = `<div class="boss-banner">${G() ? `<span class="bf">${boss.face}</span>` : ''}<div style="flex:1"><b>${esc(G() ? boss.name : ev.title)}</b> · ${DU.pretty(ev.date)} ${ev.start || ''}<br>
+          <small>Tiempo estimado ${DU.fmtDur(boss.maxHP)} · Importancia ${ev.importance || '?'}/5 · Dificultad ${ev.difficulty || '?'}/5</small>
+          <div class="hp big ${G() ? '' : 'prep'}"><i style="width:${G() ? Math.round(left / boss.maxHP * 100) : 100 - Math.round(left / boss.maxHP * 100)}%"></i></div>
+          <small>${G() ? (left === 0 ? `Con estas ${inc.length} sesiones (${DU.fmtDur(total)}) lo derrotas antes del examen ⚔️` : `Con estas sesiones le quitas ${DU.fmtDur(boss.hp - left)}; le quedarían ${DU.fmtDur(left)} de vida`) : (left === 0 ? `${inc.length} sesiones · ${DU.fmtDur(total)}: llegas 100% preparado` : `${inc.length} sesiones · ${DU.fmtDur(total)}: llegarías ${100 - Math.round(left / boss.maxHP * 100)}% preparado`)}.</small></div></div>`;
         if (existing.length) info += `<div class="callout warn">Al aprobar se reemplazan las ${existing.length} sesiones pendientes que ya tenías.</div>`;
       }
       if (result.note) info += `<div class="callout warn">${esc(result.note)}</div>`;
@@ -1029,7 +1036,7 @@
       m.close();
       commit();
       FX.chime('ok');
-      toast(`✅ ${inc.length} ${inc.length === 1 ? 'sesión agregada' : 'sesiones agregadas'} al calendario`,
+      toast(`${inc.length} ${inc.length === 1 ? 'sesión agregada' : 'sesiones agregadas'} al calendario`,
         inc.length ? [{ label: 'Ver semana', fn: () => { ui.view = 'week'; ui.cursor = inc[0].date; ui.weekScroll = null; renderAll(); } }] : [], 6000);
     };
   }
@@ -1049,10 +1056,10 @@
         return;
       }
       const s = parsed.subject && SUBJECTS[parsed.subject];
-      prev.innerHTML = `<span class="qchip t-${parsed.kind}">${TYPE[parsed.kind].icon} ${TYPE[parsed.kind].label}</span>
-        ${s ? `<span class="qchip subj" style="--sc:${s.color}">${s.icon} ${esc(s.name)}</span>` : ''}
-        <span class="qchip">📅 ${DU.prettyShort(parsed.date)} <small>(${DU.relative(parsed.date)})</small></span>
-        <span class="qchip">🕐 ${parsed.start}</span><span class="qp-hint">↵ Enter</span>`;
+      prev.innerHTML = `<span class="qchip t-${parsed.kind}">${em(TYPE[parsed.kind].icon)}${TYPE[parsed.kind].label}</span>
+        ${s ? `<span class="qchip subj" style="--sc:${s.color}">${sdot(s)}${esc(s.name)}</span>` : ''}
+        <span class="qchip">${DU.prettyShort(parsed.date)} <small>${DU.relative(parsed.date)}</small></span>
+        <span class="qchip">${parsed.start}</span><span class="qp-hint">↵ Enter</span>`;
     };
     input.addEventListener('input', update);
     update();
@@ -1145,7 +1152,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       a.kind = kind;
       const subj = a.subject && SUBJECTS[a.subject];
       const card = el(`<div class="action-card ${done ? 'resolved' : ''}">
-        <div class="ah"><span class="tag t-${kind}">${TYPE[kind].label}</span><b>${subj ? subj.icon + ' ' : ''}${esc(a.title)}</b></div>
+        <div class="ah"><span class="tag t-${kind}">${TYPE[kind].label}</span><b>${subj ? sdot(subj) : ''}${esc(a.title)}</b></div>
         <div class="meta">📅 ${a.date ? DU.pretty(a.date) : '?'} · ${esc(a.start || '')}${a.end ? '–' + esc(a.end) : ''}${a.notes ? '<br>📝 ' + esc(a.notes) : ''}</div>
         ${done ? `<div class="status-note">${esc(a.note || '')}</div>` : `<div class="qwrap">${questionsHTML({ ...a, type: kind })}</div>
         <div class="row-btns">
@@ -1282,17 +1289,16 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
   //  Ajustes
   // =========================================================
   const ACCENTS = [
-    ['violeta', 'Violeta', '#5b5bf0', '#8b7bff'],
-    ['raimondi', 'Raimondi', '#138a4a', '#d0283a'],
-    ['oceano', 'Océano', '#0a7cc9', '#16c0b0'],
-    ['atardecer', 'Atardecer', '#ea580c', '#f59e0b'],
-    ['rosa', 'Rosa', '#db2777', '#a855f7'],
+    ['tinta', 'Papel y tinta', '#FAFAF9', '#4B5BDC'],
+    ['arena', 'Arena', '#F6F3EE', '#C2563A'],
+    ['salvia', 'Salvia', '#F7F8F6', '#5B8A72'],
+    ['raimondi', 'Raimondi', '#ffffff', '#138A4A'],
   ];
   function openSettings(focus) {
     const st = state.settings;
     const routines = JSON.parse(JSON.stringify(state.routines));
     const noSchool = [...st.noSchoolDates];
-    let accent = st.accent || 'violeta';
+    let accent = st.accent || 'tinta';
     let saved = false;
     const notifState = !('Notification' in window) ? 'Tu navegador no soporta notificaciones.'
       : Notification.permission === 'granted' ? (st.notifications ? '✅ Activadas' : 'Permiso concedido, pero desactivadas')
@@ -1302,12 +1308,13 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       <div class="modal-head"><h2>Ajustes</h2><button class="icon-btn" data-close>${icon('x')}</button></div>
       <div class="modal-body settings">
         <section>
-          <h4>🎨 Apariencia</h4>
-          <div class="field"><span>Color</span><div class="swatches">${ACCENTS.map(([k, n, a, b]) => `<button type="button" data-acc="${k}" class="${accent === k ? 'sel' : ''}" title="${n}"><i style="background:linear-gradient(135deg,${a},${b})"></i>${n}</button>`).join('')}</div></div>
+          <h4>Apariencia</h4>
+          <div class="field"><span>Estilo</span><div class="swatches">${ACCENTS.map(([k, n, a, b]) => `<button type="button" data-acc="${k}" class="${accent === k ? 'sel' : ''}" title="${n}"><i style="background:linear-gradient(135deg,${a} 0 50%,${b} 50%)"></i>${n}</button>`).join('')}</div></div>
           <div class="row">
             <label class="field"><span>Tema</span><select id="sTheme"><option value="auto">Automático (como el sistema)</option><option value="light">Claro</option><option value="dark">Oscuro</option></select></label>
             <label class="field"><span>Notas de exámenes sobre</span><select id="sScale"><option value="20">20</option><option value="10">10</option><option value="100">100</option></select></label>
           </div>
+          <label class="switch"><input type="checkbox" id="sGame" ${st.gameMode ? 'checked' : ''}><span>🎮 Modo juego: exámenes como jefes con barra de vida, emojis en el calendario, sonidos y confeti</span></label>
           <label class="switch"><input type="checkbox" id="sNight" ${st.nightMode ? 'checked' : ''}><span>🌙 Modo noche automático: desde 30 min antes de dormir la app se oscurece y te propone leer 10 min</span></label>
           <label class="switch"><input type="checkbox" id="sExpand" ${st.expandSchool ? 'checked' : ''}><span>🏫 Mostrar el colegio expandido en la semana</span></label>
           <div><button class="btn sm" id="sTour">${icon('help', 14)} Ver el recorrido otra vez</button></div>
@@ -1477,6 +1484,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
       st.accent = accent;
       st.gradeScale = +$('#sScale', r).value;
       st.nightMode = $('#sNight', r).checked;
+      st.gameMode = $('#sGame', r).checked;
       st.expandSchool = $('#sExpand', r).checked;
       state.routines = routines.filter((x) => x.title && x.start && x.end && x.start < x.end && x.days.length);
       const sleep = state.goals.find((g) => g.id === 'sleep');
@@ -1603,7 +1611,7 @@ Prueba: "Tengo examen de física el miércoles, entra MRUV".</div>`));
   const App = window.App = {
     ui, $, $$, esc, el, icon, persist, commit, toast, openModal, confirmBox, TYPE, IMP, DIF, stars, dur,
     getEv, childrenOf, addEvent, markDone, addFocus, deleteEvent, bossOf, activeBosses, subjectFactor, pendingResults,
-    resultHTML, bindResult, saveResult,
+    resultHTML, bindResult, saveResult, G, em, sdot,
     isDoneGoal, setGoal, toggleGoal, streakOf, weekCount, subjOf, shortTitle, badge, lunaMood, summaryText, refreshSummary,
     renderAll, renderView, openEventModal, openPlanModal, openSettings, openChat, sendChat, setView, applyTheme,
     views: {},

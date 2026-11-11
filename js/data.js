@@ -52,21 +52,21 @@
   const BREAKS = [['10:55', '11:10', 'Pausa'], ['13:25', '14:10', 'Pranzo']];
 
   const SUBJECTS = {
-    storia: { icon: '🏛️', short: 'Storia', name: 'Storia', teacher: 'R. Valli', color: '#ff6b6b', aliases: ['storia', 'historia'] },
-    comunicacion: { icon: '✍️', short: 'Comu', name: 'Comunicación', teacher: 'E. Vizcarra', color: '#2f4fb5', aliases: ['comunicacion', 'comu', 'lenguaje'] },
-    italiano: { icon: '🇮🇹', short: 'Italiano', name: 'Italiano', teacher: 'S. Annunziata', color: '#16b8f3', aliases: ['italiano'] },
-    filosofia: { icon: '🦉', short: 'Filo', name: 'Filosofia', teacher: 'V. Ursino', color: '#d9c66a', aliases: ['filosofia', 'filo'] },
-    sociales: { icon: '🌎', short: 'Sociales', name: 'Ciencias Sociales', teacher: 'J. Santa Cruz', color: '#3a3ad6', aliases: ['ciencias sociales', 'sociales', 'ccss'] },
-    tutoria: { icon: '🤝', short: 'Tutoría', name: 'Tutoría', teacher: 'F. Schwarz', color: '#14963c', aliases: ['tutoria'] },
-    ingles: { icon: '🇬🇧', short: 'Inglés', name: 'Inglés', teacher: 'M. Mohatt', color: '#a020a0', aliases: ['ingles', 'english'] },
-    scienze: { icon: '🧬', short: 'Scienze', name: 'Scienze', teacher: 'J. Lopez', color: '#6a6ad0', aliases: ['scienze', 'ciencias', 'biologia', 'quimica'] },
-    edfisica: { icon: '🏃', short: 'Ed. Fís.', name: 'Ed. Física', teacher: 'J. Mori / N. Nieri', color: '#9093ff', aliases: ['educacion fisica', 'ed fisica', 'ed. fisica'] },
-    latino: { icon: '📜', short: 'Latino', name: 'Latino', teacher: 'S. Annunziata', color: '#2bbdbd', aliases: ['latino', 'latin'] },
-    matematica: { icon: '∫', short: 'Mate', name: 'Matemática', teacher: 'TG', color: '#e0c400', aliases: ['matematicas', 'matematica', 'mate', 'algebra', 'geometria', 'trigonometria'] },
-    fisica: { icon: '⚛️', short: 'Física', name: 'Física', teacher: 'F. Schwarz', color: '#1fbf1f', aliases: ['fisica'] },
-    arte: { icon: '🎨', short: 'Arte', name: "Diseg. e Storia dell'arte", teacher: 'C. Napoli', color: '#f5b028', aliases: ['historia del arte', 'disegno', 'dibujo', 'arte'] },
-    religion: { icon: '✝️', short: 'Religión', name: 'Religión', teacher: 'J. Cabeza', color: '#f58f8f', aliases: ['religion'] },
-    informatica: { icon: '💻', short: 'Info', name: 'Informática', teacher: 'A. Córdova', color: '#159a4a', aliases: ['informatica', 'computacion'] },
+    storia: { icon: '🏛️', short: 'Storia', name: 'Storia', teacher: 'R. Valli', color: '#D9645C', aliases: ['storia', 'historia'] },
+    comunicacion: { icon: '✍️', short: 'Comu', name: 'Comunicación', teacher: 'E. Vizcarra', color: '#4767B8', aliases: ['comunicacion', 'comu', 'lenguaje'] },
+    italiano: { icon: '🇮🇹', short: 'Italiano', name: 'Italiano', teacher: 'S. Annunziata', color: '#3A9BC9', aliases: ['italiano'] },
+    filosofia: { icon: '🦉', short: 'Filo', name: 'Filosofia', teacher: 'V. Ursino', color: '#B8A15E', aliases: ['filosofia', 'filo'] },
+    sociales: { icon: '🌎', short: 'Sociales', name: 'Ciencias Sociales', teacher: 'J. Santa Cruz', color: '#5A5FB0', aliases: ['ciencias sociales', 'sociales', 'ccss'] },
+    tutoria: { icon: '🤝', short: 'Tutoría', name: 'Tutoría', teacher: 'F. Schwarz', color: '#4E9A6A', aliases: ['tutoria'] },
+    ingles: { icon: '🇬🇧', short: 'Inglés', name: 'Inglés', teacher: 'M. Mohatt', color: '#9B5DB5', aliases: ['ingles', 'english'] },
+    scienze: { icon: '🧬', short: 'Scienze', name: 'Scienze', teacher: 'J. Lopez', color: '#6B6FC4', aliases: ['scienze', 'ciencias', 'biologia', 'quimica'] },
+    edfisica: { icon: '🏃', short: 'Ed. Fís.', name: 'Ed. Física', teacher: 'J. Mori / N. Nieri', color: '#7F8AD6', aliases: ['educacion fisica', 'ed fisica', 'ed. fisica'] },
+    latino: { icon: '📜', short: 'Latino', name: 'Latino', teacher: 'S. Annunziata', color: '#3AA6A0', aliases: ['latino', 'latin'] },
+    matematica: { icon: '∫', short: 'Mate', name: 'Matemática', teacher: 'TG', color: '#C9A227', aliases: ['matematicas', 'matematica', 'mate', 'algebra', 'geometria', 'trigonometria'] },
+    fisica: { icon: '⚛️', short: 'Física', name: 'Física', teacher: 'F. Schwarz', color: '#3F9B6B', aliases: ['fisica'] },
+    arte: { icon: '🎨', short: 'Arte', name: "Diseg. e Storia dell'arte", teacher: 'C. Napoli', color: '#D98E3A', aliases: ['historia del arte', 'disegno', 'dibujo', 'arte'] },
+    religion: { icon: '✝️', short: 'Religión', name: 'Religión', teacher: 'J. Cabeza', color: '#C9777A', aliases: ['religion'] },
+    informatica: { icon: '💻', short: 'Info', name: 'Informática', teacher: 'A. Córdova', color: '#4C8F73', aliases: ['informatica', 'computacion'] },
   };
 
   // [periodo inicial, periodo final, materia] por día (1 = lunes)
@@ -127,7 +127,8 @@
     noSchoolDates: [],
     schoolEnd: '',
     notifications: false,
-    accent: 'violeta',        // violeta | raimondi | oceano | atardecer | rosa
+    accent: 'tinta',          // tinta | arena | salvia | raimondi
+    gameMode: false,          // jefes, emojis y confeti
     expandSchool: false,      // colegio comprimido en la vista semanal
     nightMode: true,          // modo noche automático + ritual de lectura
     gradeScale: 20,
@@ -158,10 +159,9 @@
       if (!raw) return freshState();
       const s = JSON.parse(raw);
       const base = freshState();
-      return {
-        ...base, ...s,
-        settings: { ...base.settings, ...(s.settings || {}) },
-      };
+      const st = { ...base.settings, ...(s.settings || {}) };
+      if (!['tinta', 'arena', 'salvia', 'raimondi'].includes(st.accent)) st.accent = 'tinta';
+      return { ...base, ...s, settings: st };
     } catch (e) {
       console.warn('No se pudo leer el almacenamiento', e);
       return freshState();

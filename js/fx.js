@@ -6,6 +6,7 @@
 
   // ---------- Confeti ----------
   function confetti({ count = 160, duration = 2600 } = {}) {
+    if (!window.FX.fun) return;
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const c = document.createElement('canvas');
     c.className = 'confetti';
@@ -40,6 +41,7 @@
   // ---------- Sonidos ----------
   let actx = null;
   function chime(kind = 'ok') {
+    if (!window.FX.fun && kind !== 'end') return;
     try {
       actx = actx || new (window.AudioContext || window.webkitAudioContext)();
       const notes = kind === 'win' ? [523, 659, 784, 1047] : kind === 'end' ? [784, 659, 523] : [660, 880];
@@ -79,5 +81,5 @@
     return rec;
   }
 
-  window.FX = { confetti, chime, listen, canListen: !!SR };
+  window.FX = { confetti, chime, listen, canListen: !!SR, fun: false };
 })();

@@ -21,7 +21,7 @@ Agenda escolar para la PC (se abre en el navegador) con **Luna**, una asistente 
   - Tu negocio es una **plantita** 🌰→🌳 que crece con cada avance, y cada idea que anotas es una hoja 🍃.
 
 ### Exámenes como jefes 🐉
-Cada examen es un monstruo con **barra de vida**: su vida son las horas de estudio que estimaste. Mientras más importante y difícil es el examen, más grande es el monstruo (🐛 → 👾 → 🐲 → 🐉). Cada sesión de estudio le baja vida, y si lo derrotas antes del examen sale **confeti** 🎉.
+En **Modo juego**, cada examen es un monstruo con **barra de vida**: su vida son las horas de estudio que estimaste. Mientras más importante y difícil es el examen, más grande es el monstruo (🐛 → 👾 → 🐲 → 🐉). Cada sesión de estudio le baja vida, y si lo derrotas antes del examen sale **confeti** 🎉.
 
 ### Modo concentración ⏱️
 Al darle ▶ a una sesión se abre una pantalla completa del color de la materia con:
@@ -44,9 +44,11 @@ Abajo puedes **escribir o dictar** ("examen de física el miércoles"). Mientras
 ### Luna 💬
 Una burbuja flotante abajo a la derecha. Su cara cambia según el momento: 😊 por la mañana, 🤓 cuando hay examen cerca, 🥳 cuando cumples tus metas, 😴 de noche.
 
-### Apariencia
-- 5 colores: **Violeta**, **Raimondi** (verde, blanco y rojo), **Océano**, **Atardecer** y **Rosa**.
-- Modo claro y oscuro, y tipografía *Plus Jakarta Sans*.
+### Apariencia minimalista
+- Estilo **Papel y tinta** por defecto: fondo blanco cálido, texto casi negro y un solo color de acento (índigo). El color solo aparece cuando significa algo: cada materia tiene su puntito de color y el rojo se usa solo para lo urgente.
+- Otros estilos en ⚙️ Ajustes: **Arena** (cálido, tipo libreta), **Salvia** (verde calmado) y **Raimondi**. Todos funcionan en modo claro y oscuro (el oscuro nunca es negro puro).
+- Letra **Inter**, con solo 3 grosores y números alineados en horas y temporizadores.
+- **Modo juego** (apagado por defecto): activa los jefes 🐉 con barra de vida, los emojis en el calendario, los sonidos y el confeti. Si está apagado verás "% preparado" en cada examen.
 - La primera vez que abres la app hay un **recorrido guiado**. Puedes repetirlo con el botón ❔.
 
 ## Activar la IA gratis (Google Gemini)
